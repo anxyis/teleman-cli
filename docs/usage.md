@@ -4,7 +4,13 @@ Teleman behaves identically to high-level CLI tools like `rclone`, but communica
 
 ## 1. Initial Setup (`teleman config`)
 
-Before you can sync any files, you must run the interactive Configuration Wizard.
+Before you can sync any files, you can globally deploy the binary into your PATH.
+
+```bash
+teleman install
+```
+
+Once installed, you must run the interactive Configuration Wizard:
 
 ```bash
 teleman config
@@ -15,6 +21,9 @@ The wizard will first request your **Bot Token** (from `@BotFather`) and a **Ded
 
 ### Target Aliases
 Instead of forcing you to memorize complex `-100` numeric channel IDs or user IDs, the wizard allows you to assign them English "Aliases" (like `home_nas`, `backup_channel`, or `wife`).
+
+**Namespace Isolation Rule:**
+Teleman securely isolates each target under the hood. `teleman ls wife:` and `teleman ls home_nas:` operate entirely independently without their mapped files ever colliding, ensuring true virtual isolation.
 
 **Note on User Targets:**
 If you want Teleman to back up directly to a specific user, that user **must** manually start the bot on Telegram (send `/start`) before Teleman is legally permitted to upload chunks. 
@@ -60,7 +69,10 @@ Teleman natively utilizes all logical CPU cores available to it. You can tightly
   - `--encrypt` (`-e`): Passing this flag will seal all file streams natively through AES-256-GCM before exiting the local machine.
 - **On The Fly Archiving**:
   - `--zip` / `--tgz`: Condenses massive directory trees down into highly transportable `.zip` chunks rather than retaining 1:1 internal directory mappings.
-- **Media Optimization**:
-  - `--media`: Opt-in mapping that natively inspects single-chunk unencrypted files. If it detects a media format (`.jpg`, `.mp4`, `.mp3`), it routes the byte-stream natively through Telegram's rich media API endpoints (`/sendPhoto`, `/sendVideo`, `/sendAudio`). It also gracefully injects pure-Go memory-extracted metadata (ID3 tags/album artwork) for music streaming pipelines! It falls back safely to `/sendDocument` for chunked, encrypted, or raw payload streams (e.g. `.wav`).
+- **Media Native UI (Spotify-Clone Mode)**:
+  - `--media`: Opt-in mapping that natively inspects single-chunk unencrypted files. Discovers media models (`.jpg`, `.mp4`, `.mp3`) and organically routes the byte-stream against Telegram's rich media `/sendAudio` protocols. Leverages pure-Go native tag-extraction to bind ID3 Metadata (Album cover/Artist strings) natively bypassing raw blobs entirely! Fallbacks safely to standard logic if the format breaks or metadata resolves corrupted.
 - **Sync Overrides**:
-  - `--force` (`-f`): Bypasses the diffing engine and explicitly forces an immediate upload of the stream, aggressively overwriting index records even if the destination pointer marks them as identical.
+  - `--force` (`-f`): Bypasses the active index diffing engine. Explicitly forces an immediate network push of your byte chunk, ripping and overwriting destination chunk indices even if matching records indicate zero byte variation.
+- **Output Control**:
+  - `--verbose` (`-v`): Unlocks maximal debug and index chunk inspection data.
+  - `--quiet` (`-q`): Completely suppresses the terminal to silent mode. Output isolated strictly to fatal crashes.

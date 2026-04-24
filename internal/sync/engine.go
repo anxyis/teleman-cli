@@ -10,8 +10,11 @@ import (
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/config"
 	"github.com/teleman-cli/teleman/internal/index"
+	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/telegram"
+	"sync"
+	"sync/atomic"
 )
 
 type SyncEngine struct {
@@ -105,11 +108,14 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 		})
 	}
 
-	fmt.Printf("=> Diffing %d local files against virtual index (Checkers: %d)...\n", len(localFiles), s.optCheckers)
+	localFiles := localFiles // shadow for clarity
+	logger.Step("=> Diffing %d local files against virtual index (Checkers: %d)...", len(localFiles), s.optCheckers)
 
 	// 2. Diffing Pipeline (Checkers)
 	tasksChan := make(chan fileTask, len(localFiles))
 	uploadChan := make(chan fileTask, len(localFiles))
+
+	var skipped atomic.Int32
 
 	var wgCheck sync.WaitGroup
 	for i := 0; i < s.optCheckers; i++ {
@@ -122,6 +128,8 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 					if existing, ok := idx.Files[task.VirtualPath]; ok {
 						if existing.Size == task.FileInfo.Size() && existing.ModTime == task.FileInfo.ModTime().Unix() {
 							needsUpload = false
+							skipped.Add(1)
+							logger.Debug("   [Skipped] %s (Unchanged)", task.VirtualPath)
 						}
 					}
 				}
@@ -145,34 +153,41 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 	}
 
 	if len(uploadList) == 0 {
-		fmt.Println("=> Target is perfectly in sync. Nothing to do.")
+		logger.Success("=> Target is perfectly in sync. Nothing to do (Skipped %d files).", skipped.Load())
 		return nil
 	}
 
-	fmt.Printf("=> Enqueueing %d files for transfer (Workers: %d)...\n", len(uploadList), s.optTransfers)
+	logger.Step("=> Enqueueing %d files for transfer (Workers: %d)...", len(uploadList), s.optTransfers)
 
 	// 3. Upload Pipeline (Transfers)
 	transferChan := make(chan fileTask, len(uploadList))
 	var wgTransfer sync.WaitGroup
 	var idxMutex sync.Mutex
 
+	var uploaded atomic.Int32
+	var errors atomic.Int32
+	totalToUpload := int32(len(uploadList))
+
 	for i := 0; i < s.optTransfers; i++ {
 		wgTransfer.Add(1)
 		go func() {
 			defer wgTransfer.Done()
 			for task := range transferChan {
-				fmt.Printf("   [Uploading] %s (%d bytes)\n", task.VirtualPath, task.FileInfo.Size())
+				current := uploaded.Add(1)
+				logger.Info("[%d/%d] %s (%d bytes)", current, totalToUpload, task.VirtualPath, task.FileInfo.Size())
 
 				f, err := os.Open(task.LocalPath)
 				if err != nil {
-					fmt.Printf("      [Error] Failed to open %s: %v\n", task.LocalPath, err)
+					logger.Error("      [Error] Failed to open %s: %v", task.LocalPath, err)
+					errors.Add(1)
 					continue
 				}
 
 				chunks, err := s.chunker.ProcessStream(target.ChatID, target.ThreadID, filepath.Base(task.VirtualPath), f, nil)
 				f.Close()
 				if err != nil {
-					fmt.Printf("      [Error] Upload Failed for %s: %v\n", task.VirtualPath, err)
+					logger.Error("      [Error] Upload Failed for %s: %v", task.VirtualPath, err)
+					errors.Add(1)
 					continue
 				}
 
@@ -185,6 +200,7 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 				}
 				idx.Version++
 				idxMutex.Unlock()
+				logger.Debug("      Success! %d chunks uploaded for %s", len(chunks), task.VirtualPath)
 			}
 		}()
 	}
@@ -195,11 +211,13 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 	close(transferChan)
 	wgTransfer.Wait()
 
-	fmt.Println("=> Committing new index to Telegram...")
+	logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors", uploaded.Load()-errors.Load(), skipped.Load(), errors.Load())
+
+	logger.Step("=> Committing new index to Telegram...")
 	if err := s.idxManager.PushVersion(idx); err != nil {
 		return fmt.Errorf("failed to commit index: %v", err)
 	}
 
-	fmt.Println("=> Sync operation completed successfully.")
+	logger.Success("=> Sync operation completed successfully.")
 	return nil
 }

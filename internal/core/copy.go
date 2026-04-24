@@ -9,6 +9,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/config"
 	"github.com/teleman-cli/teleman/internal/index"
+	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
@@ -37,19 +38,19 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 	}
 
 	// 3. API Connectivity Check
-	fmt.Println("=> Initializing API Client...")
+	logger.Step("=> Initializing API Client...")
 	client := telegram.NewClient(cfg.ActiveToken, cfg.CustomAPIHost)
 	me, err := client.GetMe()
 	if err != nil {
 		return fmt.Errorf("API connectivity failed: %v", err)
 	}
-	fmt.Printf("   Connected as: %s\n", me["first_name"])
+	logger.Debug("   Connected as: %s", me["first_name"])
 
 	// 4. Validate Target Permissions
-	fmt.Println("=> Validating target chat permissions...")
+	logger.Step("=> Validating target chat permissions...")
 	if err := client.GetChat(target.ChatID); err != nil {
 		if target.Type == "user" {
-			fmt.Printf("   [Warning] Could not validate user chat (%v). Proceeding assuming bot has access.\n", err)
+			logger.Warn("   [Warning] Could not validate user chat (%v). Proceeding assuming bot has access.", err)
 		} else {
 			return fmt.Errorf("target validation failed: %v", err)
 		}
@@ -62,7 +63,7 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 	}
 	engine := chunker.NewEngine(client, mediaMode)
 
-	fmt.Println("=> Loading Virtual Index...")
+	logger.Step("=> Loading Virtual Index...")
 	idx, err := mgr.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load index: %v", err)
@@ -78,8 +79,8 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 		vPath := fmt.Sprintf("%s/%s.zip", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
 		vPath = strings.TrimLeft(vPath, "/")
 		
-		fmt.Printf("=> Archiving '%s' on-the-fly to %s\n", source, vPath)
-		fmt.Printf("   [Uploading] %s (Streaming Archive)...\n", vPath)
+		logger.Step("=> Archiving '%s' on-the-fly to %s", source, vPath)
+		logger.Info("   [Uploading] %s (Streaming Archive)...", vPath)
 
 		r, err := chunker.StreamZip(source)
 		if err != nil {
@@ -106,7 +107,7 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 		idx.Files[vPath].Size = totalSize
 
 		idx.Version++
-		fmt.Printf("      Success! %d chunks uploaded (%d bytes)\n", len(chunks), totalSize)
+		logger.Success("      Success! %d chunks uploaded (%d bytes)", len(chunks), totalSize)
 	} else {
 		var filesToUpload []string
 		
@@ -121,9 +122,10 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 			filesToUpload = append(filesToUpload, source)
 		}
 
-		fmt.Printf("=> Found %d files to sync\n", len(filesToUpload))
+		logger.Step("=> Found %d files to sync", len(filesToUpload))
 
-		for _, localPath := range filesToUpload {
+		var uploaded, skipped, errors int
+		for i, localPath := range filesToUpload {
 			relPath := filepath.Base(localPath)
 			if info.IsDir() {
 				rel, _ := filepath.Rel(source, localPath)
@@ -137,24 +139,27 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 			if !force {
 				if existing, ok := idx.Files[vPath]; ok {
 					if existing.Size == fileInfo.Size() && existing.ModTime == fileInfo.ModTime().Unix() {
-						fmt.Printf("   [Skipped] %s (Unchanged)\n", vPath)
+						logger.Debug("   [Skipped] %s (Unchanged)", vPath)
+						skipped++
 						continue
 					}
 				}
 			}
 
-			fmt.Printf("   [Uploading] %s (%d bytes)...\n", vPath, fileInfo.Size())
+			logger.Info("[%d/%d] %s (%d bytes)", i+1, len(filesToUpload), vPath, fileInfo.Size())
 
 			f, err := os.Open(localPath)
 			if err != nil {
-				fmt.Printf("      Error: %v\n", err)
+				logger.Error("      Error: %v", err)
+				errors++
 				continue
 			}
 
 			chunks, err := engine.ProcessStream(target.ChatID, target.ThreadID, filepath.Base(vPath), f, nil)
 			f.Close()
 			if err != nil {
-				fmt.Printf("      Upload Failed: %v\n", err)
+				logger.Error("      Upload Failed: %v", err)
+				errors++
 				continue
 			}
 
@@ -164,15 +169,17 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 				Chunks:  chunks,
 			}
 			idx.Version++
-			fmt.Printf("      Success! %d chunks uploaded\n", len(chunks))
+			uploaded++
+			logger.Debug("      Success! %d chunks uploaded", len(chunks))
 		}
+		logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors", uploaded, skipped, errors)
 	}
 
-	fmt.Println("=> Committing new index to Telegram...")
+	logger.Step("=> Committing new index to Telegram...")
 	if err := mgr.PushVersion(idx); err != nil {
 		return fmt.Errorf("failed to push index: %v", err)
 	}
 
-	fmt.Println("=> Copy operation completed successfully.")
+	logger.Success("=> Copy operation completed successfully.")
 	return nil
 }

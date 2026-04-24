@@ -9,6 +9,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/config"
 	"github.com/teleman-cli/teleman/internal/core"
 	"github.com/teleman-cli/teleman/internal/index"
+	"github.com/teleman-cli/teleman/internal/logger"
 	syncpkg "github.com/teleman-cli/teleman/internal/sync"
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
@@ -17,6 +18,9 @@ var rootCmd = &cobra.Command{
 	Use:   "teleman",
 	Short: "Teleman is a high-performance Telegram-based file syncer.",
 	Long:  `A fast and flexible file transfer utility utilizing a self-hosted Telegram Bot API as an Object Store.`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		logger.Init(verbose, quiet)
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
@@ -41,16 +45,16 @@ var syncCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		source := args[0]
 		target := args[1]
-		fmt.Printf("Starting Sync:\n Source: %s\n Target: %s\n", source, target)
+		logger.Step("Starting Sync:\n Source: %s\n Target: %s", source, target)
 		
 		engine, err := syncpkg.NewSyncEngine(transfers, checkers, zipMode, mediaMode, force)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Sync Init Error: %v\n", err)
+			logger.Error("Sync Init Error: %v", err)
 			os.Exit(1)
 		}
 
 		if err := engine.Run(source, target); err != nil {
-			fmt.Fprintf(os.Stderr, "Sync Error: %v\n", err)
+			logger.Error("Sync Error: %v", err)
 			os.Exit(1)
 		}
 	},
@@ -63,10 +67,10 @@ var copyCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		source := args[0]
 		target := args[1]
-		fmt.Printf("Starting Copy:\n Source: %s\n Target: %s\n", source, target)
+		logger.Step("Starting Copy:\n Source: %s\n Target: %s", source, target)
 		
 		if err := core.RunCopy(source, target, zipMode, mediaMode, force); err != nil {
-			fmt.Fprintf(os.Stderr, "Copy Error: %v\n", err)
+			logger.Error("Copy Error: %v", err)
 			os.Exit(1)
 		}
 	},
@@ -79,7 +83,7 @@ var moveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		source := args[0]
 		target := args[1]
-		fmt.Printf("Starting Move:\n Source: %s\n Target: %s\n", source, target)
+		logger.Step("Starting Move:\n Source: %s\n Target: %s", source, target)
 	},
 }
 
@@ -91,46 +95,46 @@ var lsCmd = &cobra.Command{
 		targetRaw := args[0]
 		parts := strings.SplitN(targetRaw, ":", 2)
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "invalid target format. Use alias:virtual/path\n")
+			logger.Error("invalid target format. Use alias:virtual/path")
 			os.Exit(1)
 		}
 		alias, virtualRoot := parts[0], parts[1]
 
 		cfg, err := config.Load()
 		if err != nil || cfg.ActiveToken == "" {
-			fmt.Fprintf(os.Stderr, "Config error (run teleman config)\n")
+			logger.Error("Config error (run teleman config)")
 			os.Exit(1)
 		}
 		_, ok := cfg.Targets[alias]
 		if !ok {
-			fmt.Fprintf(os.Stderr, "target alias '%s' not found\n", alias)
+			logger.Error("target alias '%s' not found", alias)
 			os.Exit(1)
 		}
 
 		client := telegram.NewClient(cfg.ActiveToken, cfg.CustomAPIHost)
 		mgr, err := index.NewManager(client, cfg.IndexChannelID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Index init error: %v\n", err)
+			logger.Error("Index init error: %v", err)
 			os.Exit(1)
 		}
 
 		idx, err := mgr.Load()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to load index: %v\n", err)
+			logger.Error("Failed to load index: %v", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Listing contents of: %s\n", targetRaw)
+		logger.Info("Listing contents of: %s", targetRaw)
 		found := 0
 		virtualPrefix := strings.TrimLeft(virtualRoot, "/")
 		for vPath, entry := range idx.Files {
 			if virtualPrefix == "" || strings.HasPrefix(vPath, virtualPrefix) {
-				fmt.Printf("%10d %s\n", entry.Size, vPath)
+				logger.Info("%10d %s", entry.Size, vPath)
 				found++
 			}
 		}
 		if found == 0 {
-			fmt.Println("(No files found)")
+			logger.Info("(No files found)")
 		}
 	},
 }
@@ -143,6 +147,8 @@ var (
 	zipMode   bool
 	mediaMode bool
 	force     bool
+	verbose   bool
+	quiet     bool
 )
 
 func addTransferFlags(cmd *cobra.Command) {
@@ -156,6 +162,9 @@ func addTransferFlags(cmd *cobra.Command) {
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose debug logging")
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress all output except errors")
+
 	addTransferFlags(syncCmd)
 	addTransferFlags(copyCmd)
 	addTransferFlags(moveCmd)

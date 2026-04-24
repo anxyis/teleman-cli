@@ -1,0 +1,48 @@
+{
+  "id": "catppuccin-latte",
+  "name": "Catppuccin Latte",
+  "author": "Catppuccin",
+  "type": "light",
+  "tokens": {
+    "colors": {
+      "canvas": "#eff1f5",
+      "surface": "#e6e9ef",
+      "surfaceHighlight": "#ccd0da",
+      "border": "#dce0e8",
+      "primary": "#8839ef",
+      "primaryHover": "#ea76cb",
+      "onPrimary": "#eff1f5",
+      "textMain": "#4c4f69",
+      "textMuted": "#9ca0b0"
+    },
+    "radii": {
+      "button": "12px",
+      "card": "16px",
+      "input": "12px",
+      "modal": "20px",
+      "navbar": "100px"
+    },
+    "typography": {
+      "fontFamily": "Inter, system-ui, sans-serif",
+      "baseSize": "15px",
+      "headingWeight": "600"
+    },
+    "effects": {
+      "glassOpacity": "0.8",
+      "shadowCard": "0 4px 6px -1px rgba(0,0,0,0.05)",
+      "buttonTransform": "scale(0.97)",
+      "glow": true
+    },
+    "icons": {
+      "strokeWidth": "1.8"
+    }
+  },
+  "background": {
+    "enabled": true,
+    "imagePath": "1772474356849-c792e8.jpg",
+    "opacity": 0.5,
+    "cardTransparency": 0.85,
+    "glassBlur": false,
+    "blurIntensity": 10
+  }
+}

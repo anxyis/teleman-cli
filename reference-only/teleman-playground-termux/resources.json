@@ -1,0 +1,91 @@
+{
+  "test_token": {
+    "users": [
+      {
+        "id": 1,
+        "first_name": "Test",
+        "is_bot": false
+      }
+    ],
+    "chats": [],
+    "topics": []
+  },
+  "8301864733:AAHNu8TZ5XjGDXMww95xPNwOTCufh8O3Bag": {
+    "users": [
+      {
+        "id": 1246237259,
+        "first_name": "siya",
+        "last_name": "<3",
+        "username": "keynovq",
+        "is_bot": false
+      },
+      {
+        "id": 8301864733,
+        "first_name": "scoobytelly",
+        "username": "scoobydellybot",
+        "is_bot": true
+      }
+    ],
+    "chats": [
+      {
+        "id": 55555,
+        "first_name": "BatchTargetChat",
+        "title": "BatchTargetChat",
+        "type": "private"
+      },
+      {
+        "id": -1002763531537,
+        "title": "Scooby's Lair",
+        "type": "supergroup"
+      },
+      {
+        "id": -1002804701274,
+        "title": "Scoobydell's Channel",
+        "type": "channel"
+      },
+      {
+        "id": 1246237259,
+        "title": "keynovq",
+        "type": "private",
+        "username": "keynovq"
+      }
+    ],
+    "topics": [
+      {
+        "chat_id": -1002763531537,
+        "thread_id": 9,
+        "name": "Topic 9"
+      },
+      {
+        "chat_id": -1002763531537,
+        "thread_id": 261,
+        "name": "Topic 261"
+      },
+      {
+        "chat_id": -1002763531537,
+        "thread_id": 2,
+        "name": "Topic 2"
+      },
+      {
+        "chat_id": -1002763531537,
+        "thread_id": 27,
+        "name": "Topic 27"
+      },
+      {
+        "chat_id": -1002763531537,
+        "thread_id": 267,
+        "name": "Topic 267"
+      },
+      {
+        "chat_id": -1002763531537,
+        "thread_id": 62,
+        "name": "Topic 62"
+      },
+      {
+        "chat_id": -1002763531537,
+        "thread_id": 278,
+        "name": "popin"
+      }
+    ]
+  }
+}

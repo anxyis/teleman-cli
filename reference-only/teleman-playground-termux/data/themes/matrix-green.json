@@ -1,0 +1,48 @@
+{
+  "id": "matrix-green",
+  "name": "Matrix Green",
+  "author": "The Oracle",
+  "type": "dark",
+  "tokens": {
+    "colors": {
+      "canvas": "#000000",
+      "surface": "#0a0a0a",
+      "surfaceHighlight": "#003b00",
+      "border": "#00ff41",
+      "primary": "#00ff41",
+      "primaryHover": "#33ff66",
+      "onPrimary": "#000000",
+      "textMain": "#00ff41",
+      "textMuted": "#008f11"
+    },
+    "radii": {
+      "button": "0px",
+      "card": "0px",
+      "input": "0px",
+      "modal": "0px",
+      "navbar": "0%"
+    },
+    "typography": {
+      "fontFamily": "'JetBrains Mono', monospace",
+      "baseSize": "14px",
+      "headingWeight": "800"
+    },
+    "effects": {
+      "glassOpacity": "1.0",
+      "shadowCard": "0 0 10px #00ff41",
+      "buttonTransform": "none",
+      "glow": true
+    },
+    "icons": {
+      "strokeWidth": "2.5"
+    }
+  },
+  "background": {
+    "enabled": false,
+    "imagePath": "1772474356849-c792e8.jpg",
+    "opacity": 0.5,
+    "cardTransparency": 0.85,
+    "glassBlur": false,
+    "blurIntensity": 10
+  }
+}

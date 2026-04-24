@@ -1,0 +1,648 @@
+import { useState, useEffect } from 'react';
+import {
+    Download, Upload, AlertTriangle, CheckCircle, Loader2, FileText,
+    ToggleLeft, ToggleRight, Bot, Trash2, Plus, Palette, Type,
+    ChevronRight, ChevronLeft, Database, Network, Save, RefreshCw
+} from 'lucide-react';
+import axios from 'axios';
+import { useTheme, type Theme } from '../context/ThemeContext';
+import { ResponsiveModal } from './common/ResponsiveModal';
+import { BetterColorPicker } from './common/BetterColorPicker';
+
+interface SettingsModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+}
+
+type SettingsView = 'root' | 'themes' | 'fonts' | 'bot' | 'data' | 'network';
+
+export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
+    const { currentTheme, availableThemes, loadTheme, refreshThemes, refreshFonts } = useTheme();
+    const [view, setView] = useState<SettingsView>('root');
+    const [restoring, setRestoring] = useState(false);
+    const [successMsg, setSuccessMsg] = useState<string | null>(null);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+    // System Preferences
+    const [showLogsButton, setShowLogsButton] = useState(() => localStorage.getItem('showLogsButton') !== 'false');
+    const [fabMode, setFabMode] = useState(() => localStorage.getItem('fabMode') === 'true');
+
+    // Bot Manager State
+    const [savedBots, setSavedBots] = useState<any[]>([]);
+    const [activeToken, setActiveToken] = useState("");
+    const [newBotToken, setNewBotToken] = useState("");
+    const [loadingBots, setLoadingBots] = useState(false);
+    const [savingBot, setSavingBot] = useState(false);
+
+    // Network Settings
+    const [telegramApiUrl, setTelegramApiUrl] = useState("http://192.168.0.7:8181");
+
+    // Font Preview Settings (RESTORED)
+    const [fontPreview, setFontPreview] = useState({
+        text: "ABCDEFGHIJKLM\nNOPQRSTUVWXYZ\n0123456789",
+        use_font_sheet: false,
+        bg_color: "#ffffff",
+        text_color: "#000000",
+        size: "medium",
+        enabled: true
+    });
+
+    // Theme Studio State
+    const [editingTheme, setEditingTheme] = useState<Theme | null>(null);
+
+    const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+
+    // --- Effects ---
+    useEffect(() => {
+        localStorage.setItem('showLogsButton', String(showLogsButton));
+        localStorage.setItem('fabMode', String(fabMode));
+        window.dispatchEvent(new CustomEvent('settingsChanged', { detail: { showLogsButton, fabMode } }));
+    }, [showLogsButton, fabMode]);
+
+    useEffect(() => {
+        if (isOpen) {
+            setView('root'); 
+            fetchBots();
+            refreshThemes();
+            refreshFonts();
+        }
+    }, [isOpen]);
+
+    useEffect(() => {
+        if (currentTheme && !editingTheme) {
+            setEditingTheme(JSON.parse(JSON.stringify(currentTheme)));
+        }
+    }, [currentTheme]);
+
+    // --- API & Actions ---
+    const fetchBots = async () => {
+        setLoadingBots(true);
+        try {
+            const res = await axios.get(`${API_BASE}/api/config`);
+            setSavedBots(res.data.saved_bots || []);
+            setActiveToken(res.data.active_token || "");
+            if (res.data.font_preview) setFontPreview(res.data.font_preview);
+            if (res.data.telegram_api_url) setTelegramApiUrl(res.data.telegram_api_url);
+        } catch (e) { console.error("Failed to fetch config", e); }
+        finally { setLoadingBots(false); }
+    };
+
+    const handleSaveBot = async () => {
+        if (!newBotToken) return;
+        setSavingBot(true); setErrorMsg(null);
+        try {
+            const res = await axios.post(`${API_BASE}/api/bots`, { token: newBotToken, set_active: true });
+            setSavedBots(res.data.saved_bots || []);
+            setActiveToken(res.data.active_token || "");
+            setNewBotToken("");
+            setSuccessMsg(`Bot added and activated!`);
+        } catch (e: any) {
+            setErrorMsg(e.response?.data?.description || "Failed to save bot");
+        } finally { setSavingBot(false); }
+    };
+
+    const handleDeleteBot = async (token: string) => {
+        if (!confirm("Are you sure? This will remove the bot from saved list.")) return;
+        try {
+            const res = await axios.delete(`${API_BASE}/api/bots/${encodeURIComponent(token)}`);
+            setSavedBots(res.data.saved_bots || []);
+            setActiveToken(res.data.active_token || "");
+        } catch { setErrorMsg("Failed to remove bot"); }
+    };
+
+    const handleActivateBot = async (token: string) => {
+        const bot = savedBots.find(b => b.token === token);
+        if (!bot) return;
+        try {
+            const res = await axios.post(`${API_BASE}/api/bots`, { name: bot.name, token: bot.token, set_active: true });
+            setActiveToken(res.data.active_token || "");
+            setSuccessMsg(`Switched to ${bot.name}`);
+        } catch { setErrorMsg("Failed to switch bot"); }
+    };
+
+    const saveFontSettings = async () => {
+        try {
+            await axios.post(`${API_BASE}/api/config/font`, fontPreview);
+            setSuccessMsg("Font generator settings saved!");
+        } catch { setErrorMsg("Failed to save font settings."); }
+    };
+
+    const saveNetworkSettings = async () => {
+        try {
+            await axios.post(`${API_BASE}/api/config/network`, { telegram_api_url: telegramApiUrl });
+            setSuccessMsg("Network settings saved!");
+        } catch { setErrorMsg("Failed to save network settings."); }
+    };
+
+    const handleRestore = async () => {
+        if (!selectedFile) return;
+        if (!confirm("⚠️ WARNING: This will OVERWRITE your current configuration, database, and presets.\n\nAre you sure?")) return;
+        setRestoring(true); setErrorMsg(null); setSuccessMsg(null);
+        const formData = new FormData(); formData.append('backup', selectedFile);
+        try {
+            const res = await axios.post(`${API_BASE}/api/restore`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+            if (res.data.success) {
+                setSuccessMsg("Restore successful! Please RESTART your container to apply changes.");
+                setSelectedFile(null);
+            }
+        } catch (e: any) { setErrorMsg(e.response?.data?.error || "Restore failed. Check server logs."); }
+        finally { setRestoring(false); }
+    };
+
+    const handleSaveTheme = async (isNew = false) => {
+        if (!editingTheme) return;
+        try {
+            const themeToSave = { ...editingTheme };
+            if (isNew) {
+                const newName = prompt("Enter new theme name:", `${themeToSave.name} Copy`);
+                if (!newName) return;
+                themeToSave.name = newName;
+                themeToSave.id = newName.toLowerCase().replace(/\s+/g, '-');
+            }
+            await axios.post(`${API_BASE}/api/themes`, themeToSave);
+            await refreshThemes();
+            await loadTheme(themeToSave.id);
+            setSuccessMsg(`Theme "${themeToSave.name}" saved!`);
+        } catch (e) {
+            setErrorMsg("Failed to save theme");
+        }
+    };
+
+    const updateToken = (path: string, value: string) => {
+        if (!editingTheme) return;
+        const newTheme = { ...editingTheme };
+        const parts = path.split('.');
+        let current: any = newTheme.tokens;
+        for (let i = 0; i < parts.length - 1; i++) {
+            current = current[parts[i]];
+        }
+        current[parts[parts.length - 1]] = value;
+        setEditingTheme(newTheme);
+        
+        // Immediate preview by applying style to root
+        const category = parts[0]; // colors, radii, etc.
+        const tokenName = parts[parts.length - 1]; // canvas, button, etc.
+        const cssKey = tokenName.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
+        
+        if (category === 'colors') {
+             // --canvas, --primary, etc.
+             document.documentElement.style.setProperty(`--${cssKey}`, value);
+        } else if (category === 'radii') {
+             // --radius-button, --radius-card, etc.
+             document.documentElement.style.setProperty(`--radius-${cssKey}`, value);
+        } else if (category === 'typography') {
+             if (tokenName === 'fontFamily') document.documentElement.style.setProperty('--font-family', value);
+             if (tokenName === 'baseSize') document.documentElement.style.setProperty('--font-size-base', value);
+             if (tokenName === 'headingWeight') document.documentElement.style.setProperty('--heading-weight', value);
+        } else if (category === 'icons') {
+             if (tokenName === 'strokeWidth') document.documentElement.style.setProperty('--icon-stroke', value);
+        }
+    };
+
+    // --- Render Components ---
+
+    const MenuTile = ({ icon: Icon, title, desc, onClick, colorClass = "text-primary" }: any) => (
+        <button onClick={onClick} className="w-full flex items-center gap-4 p-4 hover:bg-surface-highlight/50 transition-colors border-b border-border/50 first:rounded-t-lg last:border-0 text-left group">
+            <div className={`p-2.5 rounded-xl bg-surface-highlight group-hover:bg-surface transition-colors ${colorClass.replace('text-', 'bg-').replace('400', '500/10')} ${colorClass}`}>
+                <Icon size={22} />
+            </div>
+            <div className="flex-1">
+                <h3 className="text-base font-medium text-text-main">{title}</h3>
+                <p className="text-xs text-text-muted mt-0.5">{desc}</p>
+            </div>
+            <ChevronRight size={18} className="text-text-muted group-hover:text-text-main transition-colors" />
+        </button>
+    );
+
+    const renderRoot = () => (
+        <div className="space-y-4">
+            <div className="bg-surface rounded-xl border border-border overflow-hidden">
+                <MenuTile icon={Palette} title="Theme Studio" desc="Custom colors, radii, and fonts" onClick={() => setView('themes')} colorClass="text-purple-400" />
+                <MenuTile icon={Type} title="Font Previews" desc="Generator Settings, Backgrounds" onClick={() => setView('fonts')} colorClass="text-pink-400" />
+                <MenuTile icon={Bot} title="Bot Manager" desc="Tokens, Active Bot" onClick={() => setView('bot')} colorClass="text-blue-400" />
+                <MenuTile icon={Network} title="Network" desc="API Endpoints, Connection" onClick={() => setView('network')} colorClass="text-green-400" />
+                <MenuTile icon={Database} title="Data & Storage" desc="Backup, Restore, Logs" onClick={() => setView('data')} colorClass="text-orange-400" />
+            </div>
+
+            <div className="bg-surface-highlight/30 p-4 rounded-xl border border-border space-y-4">
+                <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider">System Preferences</h4>
+                <div className="flex items-center justify-between">
+                    <div><p className="text-text-main font-medium text-sm">Show Logs Button</p></div>
+                    <button onClick={() => setShowLogsButton(!showLogsButton)} className={`p-1 rounded-lg transition-colors ${showLogsButton ? 'text-green-400' : 'text-text-muted'}`}>{showLogsButton ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}</button>
+                </div>
+                <div className="flex items-center justify-between">
+                    <div><p className="text-text-main font-medium text-sm">Floating Action Button</p></div>
+                    <button onClick={() => setFabMode(!fabMode)} className={`p-1 rounded-lg transition-colors ${fabMode ? 'text-primary' : 'text-text-muted'}`}>{fabMode ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}</button>
+                </div>
+            </div>
+        </div>
+    );
+
+    const resetToDefaults = () => {
+        if (!editingTheme) return;
+        const newTheme = { ...editingTheme };
+        newTheme.tokens.radii = {
+            button: "12px",
+            card: "24px",
+            input: "12px",
+            modal: "24px"
+        };
+        newTheme.tokens.typography.baseSize = "16px";
+        newTheme.tokens.icons.strokeWidth = "2";
+        newTheme.tokens.icons.pack = "lucide";
+        setEditingTheme(newTheme);
+
+        // Apply immediately
+        document.documentElement.style.setProperty('--radius-button', "12px");
+        document.documentElement.style.setProperty('--radius-card', "24px");
+        document.documentElement.style.setProperty('--radius-input', "12px");
+        document.documentElement.style.setProperty('--radius-modal', "24px");
+        document.documentElement.style.setProperty('--font-size-base', "16px");
+        document.documentElement.style.setProperty('--icon-stroke', "2");
+    };
+
+    const renderThemes = () => {
+        const { availableFonts } = useTheme();
+        console.log("[SettingsModal] availableFonts from context:", availableFonts);
+        
+        const FONT_OPTIONS = [
+            { name: 'System', value: 'system-ui, -apple-system, sans-serif' },
+            { name: 'Gilroy', value: "'Gilroy', system-ui, sans-serif" },
+            { name: 'JetBrains Mono', value: "'JetBrains Mono', monospace" },
+            { name: 'Inter', value: "'Inter', system-ui, sans-serif" },
+            // Add custom fonts from server
+            ...availableFonts.map(f => {
+                const name = f.split('.')[0];
+                return { name: `${name} (Custom)`, value: `'${name}'` };
+            })
+        ];
+        console.log("[SettingsModal] Final FONT_OPTIONS:", FONT_OPTIONS);
+
+        return (
+            <div className="space-y-6">
+                {/* Theme Selector */}
+                <div className="space-y-3">
+                    <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Select Theme</label>
+                    <div className="grid grid-cols-2 gap-2">
+                        {availableThemes.map(t => (
+                            <button
+                                key={t.id}
+                                onClick={() => { loadTheme(t.id); setEditingTheme(null); }}
+                                className={`p-3 rounded-xl border text-sm font-medium transition-all text-left flex flex-col gap-1 ${currentTheme?.id === t.id ? 'bg-primary/10 border-primary text-primary' : 'bg-surface border-border text-text-muted hover:border-border/80'}`}
+                            >
+                                <span>{t.name}</span>
+                                <span className="text-[10px] opacity-60 uppercase">{t.type}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Token Editor */}
+                {editingTheme && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-top-4">
+                        <div className="flex items-center justify-between border-b border-border pb-2">
+                            <h4 className="text-sm font-bold text-text-main">Theme Studio: {editingTheme.name}</h4>
+                            <button onClick={() => refreshThemes()} className="p-1 hover:bg-surface-highlight rounded transition-colors text-text-muted"><RefreshCw size={14} /></button>
+                        </div>
+
+                        <div className="space-y-8 max-h-[450px] overflow-y-auto pr-2 no-scrollbar">
+                            {/* COLORS SECTION */}
+                            <section className="space-y-4">
+                                <div className="flex items-center gap-2">
+                                    <Palette size={14} className="text-primary" />
+                                    <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Colors & Branding</h5>
+                                </div>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                                    {Object.entries(editingTheme.tokens.colors).map(([key, value]) => (
+                                        <BetterColorPicker
+                                            key={key}
+                                            label={key}
+                                            color={value}
+                                            onChange={(newColor) => updateToken(`colors.${key}`, newColor)}
+                                        />
+                                    ))}
+                                </div>
+                            </section>
+
+                            {/* SHAPE & LAYOUT SECTION */}
+                            <section className="space-y-4">
+                                <div className="flex items-center gap-2">
+                                    <Database size={14} className="text-blue-400" />
+                                    <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Shape & Layout</h5>
+                                </div>
+                                <div className="space-y-4 px-1">
+                                    {Object.entries(editingTheme.tokens.radii).map(([key, value]) => {
+                                        const numValue = parseInt(value) || 0;
+                                        return (
+                                            <div key={key} className="space-y-1.5">
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-[10px] text-text-muted capitalize">{key} Radius</span>
+                                                    <span className="text-[10px] font-mono text-primary">{value}</span>
+                                                </div>
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="40"
+                                                    value={numValue}
+                                                    onChange={(e) => updateToken(`radii.${key}`, `${e.target.value}px`)}
+                                                    className="w-full h-1.5 bg-surface-highlight rounded-lg appearance-none cursor-pointer accent-primary"
+                                                />
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </section>
+
+                            {/* TYPOGRAPHY & ICONS SECTION */}
+                            <section className="space-y-4">
+                                <div className="flex items-center gap-2">
+                                    <Type size={14} className="text-pink-400" />
+                                    <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Typography & Icons</h5>
+                                </div>
+                                <div className="space-y-4">
+                                    {/* UI Font Size */}
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold">UI Text Size</span>
+                                            <span className="text-[10px] font-mono text-primary">{editingTheme.tokens.typography.baseSize}</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="12"
+                                            max="20"
+                                            step="1"
+                                            value={parseInt(editingTheme.tokens.typography.baseSize)}
+                                            onChange={(e) => updateToken('typography.baseSize', `${e.target.value}px`)}
+                                            className="w-full h-1.5 bg-surface-highlight rounded-lg appearance-none cursor-pointer accent-primary"
+                                        />
+                                    </div>
+
+                                    {/* Font Family */}
+                                    <div className="flex flex-col gap-2">
+                                        <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold">Main Font Family</span>
+                                        <select
+                                            value={FONT_OPTIONS.find(f => f.value === editingTheme.tokens.typography.fontFamily)?.value || FONT_OPTIONS[0].value}
+                                            onChange={(e) => updateToken('typography.fontFamily', e.target.value)}
+                                            className="w-full bg-surface-highlight border-none rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:ring-1 focus:ring-primary/50"
+                                        >
+                                            {FONT_OPTIONS.map(font => (
+                                                <option key={font.name} value={font.value}>{font.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    {/* Icon Stroke */}
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold">Icon Stroke Weight</span>
+                                            <span className="text-[10px] font-mono text-primary">{editingTheme.tokens.icons.strokeWidth}</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="1"
+                                            max="3"
+                                            step="0.1"
+                                            value={editingTheme.tokens.icons.strokeWidth}
+                                            onChange={(e) => updateToken('icons.strokeWidth', e.target.value)}
+                                            className="w-full h-1.5 bg-surface-highlight rounded-lg appearance-none cursor-pointer accent-primary"
+                                        />
+                                    </div>
+
+                                    {/* Icon Pack */}
+                                    <div className="flex flex-col gap-2">
+                                        <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold">Icon Style / Pack</span>
+                                        <select
+                                            value={editingTheme.tokens.icons.pack}
+                                            onChange={(e) => updateToken('icons.pack', e.target.value)}
+                                            className="w-full bg-surface-highlight border-none rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:ring-1 focus:ring-primary/50"
+                                        >
+                                            <option value="lucide">Lucide (Default)</option>
+                                            <option value="ph">Phosphor (Soft)</option>
+                                            <option value="tabler">Tabler (Technical)</option>
+                                            <option value="heroicons">Heroicons (Bold)</option>
+                                            <option value="ri">Remix (Elegant)</option>
+                                        </select>
+                                    </div>
+
+                                    <button
+                                        onClick={resetToDefaults}
+                                        className="w-full mt-4 flex items-center justify-center gap-2 px-4 py-2.5 bg-surface-highlight hover:bg-surface border border-border text-text-muted hover:text-text-main text-xs font-bold rounded-xl transition-all active:scale-95"
+                                    >
+                                        <RefreshCw size={14} /> Reset Sliders to Default
+                                    </button>
+                                </div>
+                            </section>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex gap-2 pt-4 border-t border-border">
+                            <button onClick={() => handleSaveTheme(false)} className="flex-1 flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-on-primary py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-primary/20 transition-all active:scale-95">
+                                <Save size={16} /> Save Changes
+                            </button>
+                            <button onClick={() => handleSaveTheme(true)} className="flex-1 flex items-center justify-center gap-2 bg-surface-highlight hover:bg-surface text-text-main py-2.5 rounded-xl font-bold text-sm border border-border transition-all active:scale-95">
+                                <Plus size={16} /> Save as New
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const renderFonts = () => (
+        <div className="space-y-6">
+            <div className="bg-canvas/50 p-4 rounded-lg border border-border space-y-4">
+                {/* Master Toggle */}
+                <div className="flex items-center justify-between pb-3 border-b border-border/50">
+                    <div><p className="text-text-main font-medium text-sm">Enable Font Previews</p><p className="text-[10px] text-text-muted">Generate preview images for font files</p></div>
+                    <button onClick={() => setFontPreview({ ...fontPreview, enabled: !fontPreview.enabled })} className={`p-1 rounded-lg transition-colors ${fontPreview.enabled ? 'text-primary' : 'text-text-muted'}`}>{fontPreview.enabled ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}</button>
+                </div>
+
+                {fontPreview.enabled && (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                        {/* Mode Toggle */}
+                        <div className="flex items-center justify-between">
+                            <div><p className="text-text-main font-medium text-sm">Font Sheet Mode</p><p className="text-[10px] text-text-muted">Show all characters instead of custom text</p></div>
+                            <button onClick={() => setFontPreview({ ...fontPreview, use_font_sheet: !fontPreview.use_font_sheet })} className={`p-1 rounded-lg transition-colors ${fontPreview.use_font_sheet ? 'text-primary' : 'text-text-muted'}`}>{fontPreview.use_font_sheet ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}</button>
+                        </div>
+
+                        {/* Preview Text (Hidden if Sheet Mode) */}
+                        {!fontPreview.use_font_sheet && (
+                            <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+                                <label className="text-xs text-text-muted font-bold uppercase mb-1 block">Preview Text</label>
+                                <textarea className="w-full bg-surface border border-border rounded-lg p-3 text-sm font-mono h-20 focus:border-primary outline-none resize-none" value={fontPreview.text} onChange={e => setFontPreview({ ...fontPreview, text: e.target.value })} />
+                            </div>
+                        )}
+
+                        {/* Colors */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <BetterColorPicker
+                                label="Background Color"
+                                color={fontPreview.bg_color}
+                                onChange={(c) => setFontPreview({ ...fontPreview, bg_color: c })}
+                            />
+                            <BetterColorPicker
+                                label="Text Color"
+                                color={fontPreview.text_color}
+                                onChange={(c) => setFontPreview({ ...fontPreview, text_color: c })}
+                            />
+                        </div>
+
+                        {/* Quick Presets */}
+                        <div className="flex gap-2">
+                            <button onClick={() => setFontPreview({ ...fontPreview, bg_color: "#ffffff", text_color: "#000000" })} className="px-3 py-1 bg-white text-black text-xs font-bold rounded border border-gray-300">B&W</button>
+                            <button onClick={() => setFontPreview({ ...fontPreview, bg_color: "#000000", text_color: "#ffffff" })} className="px-3 py-1 bg-black text-white text-xs font-bold rounded border border-gray-700">W&B</button>
+                        </div>
+
+                        {/* Custom Background Image */}
+                        <div className="space-y-2 pt-2 border-t border-border/50">
+                            <label className="text-xs text-text-muted font-bold uppercase block">Custom Background (Optional)</label>
+                            <p className="text-xs text-text-muted">Upload a PNG/JPG to use as the base canvas instead of a solid color.</p>
+                            <div className="flex gap-2 items-center">
+                                <input type="file" accept="image/png, image/jpeg" className="text-xs text-text-muted file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-surface-highlight file:text-text-main hover:file:bg-surface cursor-pointer"
+                                    onChange={async (e) => {
+                                        if (e.target.files && e.target.files[0]) {
+                                            const formData = new FormData(); formData.append('background', e.target.files[0]);
+                                            try { await axios.post(`${API_BASE}/api/config/font/bg`, formData); setSuccessMsg("Background uploaded!"); } catch { setErrorMsg("Failed to upload background."); }
+                                        }
+                                    }} />
+                            </div>
+                        </div>
+
+                        {/* Size */}
+                        <div>
+                            <label className="text-xs text-text-muted font-bold uppercase mb-1 block">Image Size</label>
+                            <div className="grid grid-cols-3 gap-2">
+                                {['small', 'medium', 'large'].map(s => (
+                                    <button key={s} onClick={() => setFontPreview({ ...fontPreview, size: s })} className={`py-2 px-3 text-xs font-medium rounded border transition-colors capitalize ${fontPreview.size === s ? 'bg-primary/20 border-primary text-primary' : 'bg-surface border-border text-text-muted hover:bg-surface-highlight'}`}>{s}</button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <button onClick={saveFontSettings} className="w-full py-2 bg-surface-highlight hover:bg-surface text-text-main rounded-lg font-medium transition-colors border border-border text-sm">Save Preview Settings</button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+
+    const renderBot = () => (
+        <div className="space-y-6">
+            <div className="bg-canvas/50 p-4 rounded-lg border border-border space-y-4">
+                <div className="space-y-2">
+                    <h4 className="text-xs font-bold text-text-muted uppercase">Saved Bots</h4>
+                    {loadingBots ? (
+                        <div className="flex items-center gap-2 text-text-muted text-sm"><Loader2 className="animate-spin" size={14} /> Loading...</div>
+                    ) : savedBots.length === 0 ? (
+                        <p className="text-sm text-text-muted italic">No bots saved yet.</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {savedBots.map((bot, idx) => (
+                                <div key={idx} className={`flex items-center justify-between p-3 rounded-lg border transition-all ${activeToken === bot.token ? 'bg-primary/10 border-primary/50' : 'bg-surface border-border'}`}>
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-8 h-8 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${activeToken === bot.token ? 'bg-primary text-on-primary' : 'bg-surface-highlight text-text-muted'}`}>
+                                            {bot.avatar_filename ? (
+                                                <img src={`/api/avatars/${bot.avatar_filename}`} alt={bot.name} className="w-full h-full object-cover" />
+                                            ) : (
+                                                <Bot size={16} />
+                                            )}
+                                        </div>
+                                        <div><p className={`text-sm font-medium ${activeToken === bot.token ? 'text-primary' : 'text-text-main'}`}>{bot.name}</p><p className="text-[10px] text-text-muted font-mono">{bot.token.substring(0, 10)}...</p></div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {activeToken !== bot.token && <button onClick={() => handleActivateBot(bot.token)} className="text-xs bg-surface-highlight hover:bg-surface text-text-main px-2 py-1 rounded border border-border transition-colors">Select</button>}
+                                        <button onClick={() => handleDeleteBot(bot.token)} className="text-text-muted hover:text-red-400 transition-colors p-1"><Trash2 size={14} /></button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="border-t border-border pt-4 space-y-3">
+                    <h4 className="text-xs font-bold text-text-muted uppercase flex items-center gap-2"><Plus size={12} /> Add New Bot</h4>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                        <input type="text" placeholder="Paste Bot Token" className="w-full sm:flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-text-main focus:border-primary outline-none font-mono" value={newBotToken} onChange={e => setNewBotToken(e.target.value)} />
+                        <button onClick={handleSaveBot} disabled={!newBotToken || savingBot} className="w-full sm:w-auto px-4 py-2 bg-primary hover:bg-primary-hover text-on-primary text-sm font-medium rounded flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                            {savingBot ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle size={14} />} Add
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+
+    const renderNetwork = () => (
+        <div className="space-y-6">
+            <div className="bg-canvas/50 p-4 rounded-lg border border-border space-y-4">
+                <div>
+                    <label className="text-xs text-text-muted font-bold uppercase mb-1 block">Telegram API URL</label>
+                    <input
+                        type="text"
+                        className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-text-main focus:border-primary outline-none font-mono"
+                        value={telegramApiUrl}
+                        onChange={e => setTelegramApiUrl(e.target.value)}
+                        placeholder="http://192.168.0.7:8181"
+                    />
+                </div>
+                <button onClick={saveNetworkSettings} className="w-full py-2 bg-surface-highlight hover:bg-surface text-text-main rounded-lg font-medium transition-colors border border-border text-sm">Save Network Settings</button>
+            </div>
+        </div>
+    );
+
+    const renderData = () => (
+        <div className="space-y-6">
+            <div className="space-y-4">
+                <div className="bg-canvas/50 p-4 rounded-lg border border-border">
+                    <div className="flex items-center gap-2 mb-4 text-text-main font-semibold"><Download size={20} className="text-green-400" /> Backup System</div>
+                    <button onClick={() => window.open(`${API_BASE}/api/backup`, '_blank')} className="w-full py-2 bg-surface-highlight hover:bg-surface text-text-main rounded-lg font-medium transition-colors flex items-center justify-center gap-2 border border-border"><Download size={16} /> Download Full Backup (.zip)</button>
+                    <button onClick={() => window.open(`${API_BASE}/api/debug/report`, '_blank')} className="w-full mt-2 py-2 bg-surface-highlight hover:bg-surface text-text-main rounded-lg font-medium transition-colors flex items-center justify-center gap-2 border border-border"><FileText size={16} /> Download System Report (.txt)</button>
+                </div>
+            </div>
+            <div className="space-y-4">
+                <div className="bg-canvas/50 p-4 rounded-lg border border-border">
+                    <div className="flex items-center gap-2 mb-4 text-text-main font-semibold"><Upload size={20} className="text-red-400" /> Restore Backup</div>
+                    <div className="space-y-3">
+                        <input type="file" accept=".zip" onChange={e => setSelectedFile(e.target.files?.[0] || null)} className="block w-full text-sm text-text-muted file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-surface-highlight file:text-text-main hover:file:bg-surface cursor-pointer" />
+                        <button onClick={handleRestore} disabled={!selectedFile || restoring} className="w-full py-2 rounded-lg font-bold bg-red-600 hover:bg-red-500 text-white disabled:opacity-50 flex items-center justify-center gap-2">
+                            {restoring ? <Loader2 className="animate-spin" size={18} /> : <Upload size={18} />} Restore Backup
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+
+    return (
+        <ResponsiveModal
+            isOpen={isOpen}
+            onClose={onClose}
+            title={view === 'root' ? 'Settings' : view.charAt(0).toUpperCase() + view.slice(1)}
+            widthClass="max-w-lg"
+            actions={null}
+        >
+            <div className="space-y-4">
+                {view !== 'root' && (
+                    <button onClick={() => setView('root')} className="mb-4 flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors w-fit">
+                        <ChevronLeft size={16} /> Back to Settings
+                    </button>
+                )}
+                <div className="flex-1 min-h-[300px]">
+                    {view === 'root' && renderRoot()}
+                    {view === 'themes' && renderThemes()}
+                    {view === 'fonts' && renderFonts()}
+                    {view === 'bot' && renderBot()}
+                    {view === 'network' && renderNetwork()}
+                    {view === 'data' && renderData()}
+                    {(successMsg || errorMsg) && (
+                        <div className={`mt-4 p-4 rounded-lg flex items-start gap-3 border ${successMsg ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
+                            {successMsg ? <CheckCircle size={20} className="mt-0.5" /> : <AlertTriangle size={20} className="mt-0.5" />}
+                            <p className="text-sm">{successMsg || errorMsg}</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </ResponsiveModal>
+    );
+}

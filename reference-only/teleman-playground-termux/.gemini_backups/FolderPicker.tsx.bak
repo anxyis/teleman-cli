@@ -1,0 +1,122 @@
+import { useState, useEffect } from 'react';
+import { Folder, ChevronLeft, Check, Loader2, Home } from 'lucide-react';
+import axios from 'axios';
+import { ResponsiveModal } from './common/ResponsiveModal';
+
+interface FolderPickerProps {
+    initialPath?: string;
+    onSelect: (path: string) => void;
+    onCancel: () => void;
+}
+
+export function FolderPicker({ initialPath, onSelect, onCancel }: FolderPickerProps) {
+    const [currentPath, setCurrentPath] = useState(initialPath || '.');
+    const [folders, setFolders] = useState<string[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        loadPath(currentPath);
+    }, []);
+
+    const loadPath = async (path: string) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const res = await axios.post(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/fs/ls`, { path });
+            setCurrentPath(res.data.current);
+            setFolders(res.data.folders);
+        } catch (e: any) {
+            setError(e.response?.data?.error || "Failed to list folder");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleNavigate = (folderName: string) => {
+        const separator = currentPath.includes('\\') ? '\\' : '/';
+        const newPath = currentPath.endsWith(separator)
+            ? `${currentPath}${folderName}`
+            : `${currentPath}${separator}${folderName}`;
+        loadPath(newPath);
+    };
+
+    const handleUp = () => {
+        loadPath(currentPath + '/..');
+    };
+
+    const headerActions = (
+        <button
+            onClick={handleUp}
+            className="p-1.5 hover:bg-surface-highlight rounded text-text-muted hover:text-text-main"
+            title="Go Up"
+        >
+            <ChevronLeft size={20} />
+        </button>
+    );
+
+    const footerActions = (
+        <>
+            <button
+                onClick={onCancel}
+                className="px-4 py-2 text-sm text-text-muted hover:text-text-main transition-colors"
+            >
+                Cancel
+            </button>
+            <button
+                onClick={() => onSelect(currentPath)}
+                className="px-4 py-2 bg-primary hover:bg-primary-hover text-on-primary rounded-lg text-sm flex items-center gap-2 transition-colors"
+            >
+                <Check size={16} /> Select This Folder
+            </button>
+        </>
+    );
+
+    return (
+        <ResponsiveModal
+            isOpen={true} // Controlled by parent
+            onClose={onCancel}
+            title="Browse Folders"
+            widthClass="max-w-lg"
+            actions={footerActions}
+        >
+            <div className="flex flex-col h-full md:h-[400px]">
+                {/* Header Extra - Not supported directly by ResponsiveModal yet, but we can put it in body top */}
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/50">
+                    <div className="flex gap-2">
+                        {headerActions}
+                    </div>
+                </div>
+
+                {/* Path Bar */}
+                <div className="px-3 py-2 bg-canvas border border-border rounded-lg flex items-center gap-2 font-mono text-xs text-text-muted overflow-x-auto whitespace-nowrap mb-2 shrink-0">
+                    <Home size={12} className="shrink-0" /> {currentPath}
+                </div>
+
+                {/* List */}
+                <div className="flex-1 overflow-y-auto space-y-1 min-h-[300px] border border-border rounded-lg p-2 bg-canvas/30">
+                    {loading ? (
+                        <div className="flex items-center justify-center h-full text-primary">
+                            <Loader2 className="animate-spin" />
+                        </div>
+                    ) : error ? (
+                        <div className="text-red-400 p-4 text-center">{error}</div>
+                    ) : folders.length === 0 ? (
+                        <div className="text-text-muted p-8 text-center italic">Empty folder</div>
+                    ) : (
+                        folders.map(folder => (
+                            <div
+                                key={folder}
+                                onClick={() => handleNavigate(folder)}
+                                className="flex items-center gap-3 p-3 hover:bg-surface-highlight rounded cursor-pointer text-text-main transition-colors"
+                            >
+                                <Folder size={18} className="text-primary/80" />
+                                <span className="truncate">{folder}</span>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+        </ResponsiveModal>
+    );
+}

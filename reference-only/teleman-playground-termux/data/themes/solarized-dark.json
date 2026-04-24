@@ -1,0 +1,48 @@
+{
+  "id": "solarized-dark",
+  "name": "Solarized Dark",
+  "author": "Ethan Schoonover",
+  "type": "dark",
+  "tokens": {
+    "colors": {
+      "canvas": "#002b36",
+      "surface": "#073642",
+      "surfaceHighlight": "#091f26",
+      "border": "#1d819a",
+      "primary": "#26b8d1",
+      "primaryHover": "#2aa198",
+      "onPrimary": "#002b36",
+      "textMain": "#85f1ff",
+      "textMuted": "#2f606e"
+    },
+    "radii": {
+      "button": "4px",
+      "card": "4px",
+      "input": "4px",
+      "modal": "4px",
+      "navbar": "30%"
+    },
+    "typography": {
+      "fontFamily": "system-ui, sans-serif",
+      "baseSize": "14px",
+      "headingWeight": "700"
+    },
+    "effects": {
+      "glassOpacity": "1.0",
+      "shadowCard": "none",
+      "buttonTransform": "none",
+      "glow": false
+    },
+    "icons": {
+      "strokeWidth": "1.5"
+    }
+  },
+  "background": {
+    "enabled": false,
+    "imagePath": "",
+    "opacity": 0.5,
+    "cardTransparency": 0.85,
+    "glassBlur": false,
+    "blurIntensity": 10
+  }
+}

@@ -1,0 +1,53 @@
+import React from 'react';
+import { ModernHeader } from '../components/ModernHeader';
+import { ModernBottomNav } from '../components/ModernBottomNav';
+import { ModernSidebar } from '../components/navigation/ModernSidebar';
+import { BotSelector } from '../components/BotSelector';
+
+interface AppLayoutProps {
+  children: React.ReactNode;
+  activeToken: string;
+  savedBots: any[];
+  onBotChange: () => void;
+  onOpenSettings: () => void;
+}
+
+export function AppLayout({ children, activeToken, savedBots, onBotChange, onOpenSettings }: AppLayoutProps) {
+  return (
+    <div className="min-h-screen bg-canvas text-text-main transition-colors duration-300 flex flex-col">
+      {/* Desktop Sidebar (lg:flex) */}
+      <ModernSidebar onOpenSettings={onOpenSettings}>
+          <BotSelector
+             currentBotToken={activeToken}
+             savedBots={savedBots}
+             onBotChange={onBotChange}
+             onOpenSettings={onOpenSettings}
+          />
+      </ModernSidebar>
+
+      {/* Mobile Header (lg:hidden) */}
+      <div className="lg:hidden shrink-0">
+          <ModernHeader
+              activeToken={activeToken}
+              savedBots={savedBots}
+              onBotChange={onBotChange}
+              onOpenSettings={onOpenSettings}
+          />
+      </div>
+
+      {/* Main Content Wrapper */}
+      <div className="lg:pl-[var(--w-sidebar-desktop,256px)] transition-all duration-300 flex-1 flex flex-col overflow-x-hidden max-w-[100vw]">
+        {/* Content */}
+        <main className="flex-1 w-full max-w-7xl mx-auto p-0 pb-[var(--h-nav-mobile,96px)] lg:pb-0">
+            {children}
+        </main>
+      </div>
+
+      {/* Mobile Bottom Nav (lg:hidden) */}
+      <div className="lg:hidden">
+        <ModernBottomNav />
+      </div>
+    </div>
+  );
+}
+

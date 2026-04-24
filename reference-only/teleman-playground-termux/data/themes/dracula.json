@@ -1,0 +1,48 @@
+{
+  "id": "dracula",
+  "name": "Dracula",
+  "author": "Dracula Theme",
+  "type": "dark",
+  "tokens": {
+    "colors": {
+      "canvas": "#282a36",
+      "surface": "#44475a",
+      "surfaceHighlight": "#6272a4",
+      "border": "#44475a",
+      "primary": "#bd93f9",
+      "primaryHover": "#ff79c6",
+      "onPrimary": "#282a36",
+      "textMain": "#f8f8f2",
+      "textMuted": "#bfcfff"
+    },
+    "radii": {
+      "button": "6px",
+      "card": "8px",
+      "input": "6px",
+      "modal": "10px",
+      "navbar": "100px"
+    },
+    "typography": {
+      "fontFamily": "'JetBrains Mono', monospace",
+      "baseSize": "16px",
+      "headingWeight": "700"
+    },
+    "effects": {
+      "glassOpacity": "1.0",
+      "shadowCard": "0 10px 30px -10px rgba(0,0,0,0.5)",
+      "buttonTransform": "translateY(1px)",
+      "glow": false
+    },
+    "icons": {
+      "strokeWidth": "2"
+    }
+  },
+  "background": {
+    "enabled": false,
+    "imagePath": "",
+    "opacity": 0.5,
+    "cardTransparency": 0.85,
+    "glassBlur": false,
+    "blurIntensity": 10
+  }
+}

@@ -1,0 +1,219 @@
+import { useState, useEffect, useCallback } from 'react';
+import { DynamicIcon, type IconName } from './common/DynamicIcon';
+import { AnimatedText } from './common/AnimatedText';
+import axios from 'axios';
+
+const API_BASE = '';
+
+interface FolderCardProps {
+    folder: {
+        id: string;
+        name: string;
+        source_path: string;
+        target_chat_id: string;
+        target_topic_id?: string;
+        preset_name?: string;
+        status: 'idle' | 'syncing' | 'error';
+        last_sync?: number;
+        next_sync_due?: number;
+        schedule_type?: 'none' | 'daily' | 'weekly' | 'monthly' | 'custom';
+        enabled: boolean;
+        last_session_status?: string;
+        snapshot_fingerprint?: string;
+    };
+    onRun: (folderId: string) => void;
+    onDelete: (folderId: string) => void;
+    onEdit: (folder: any) => void;
+    onShowErrors?: (folderId: string) => void;
+}
+
+type SyncStatus = 'syncing' | 'up_to_date' | 'changes_pending' | 'error' | 'partial' | 'unknown' | 'checking';
+
+// Debounce cache: folder ID -> last check timestamp
+const freshnessCache: Map<string, number> = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+export function FolderCard({ folder, onRun, onDelete, onEdit, onShowErrors }: FolderCardProps) {
+    const [computedStatus, setComputedStatus] = useState<SyncStatus>('unknown');
+    const [isChecking, setIsChecking] = useState(false);
+
+    // Status styling maps
+    const statusConfig: Record<SyncStatus, { color: string; icon: IconName; label: string }> = {
+        syncing: { color: 'text-primary animate-pulse', icon: 'loader', label: 'Syncing' },
+        up_to_date: { color: 'text-emerald-400', icon: 'check', label: 'Up to Date' },
+        changes_pending: { color: 'text-amber-400', icon: 'alert', label: 'Changes Pending' },
+        error: { color: 'text-red-400', icon: 'alert', label: 'Sync Failed' },
+        partial: { color: 'text-orange-400', icon: 'alert', label: 'Partial' },
+        unknown: { color: 'text-text-muted', icon: 'check', label: 'Not Synced' },
+        checking: { color: 'text-text-muted animate-pulse', icon: 'loader', label: 'Checking...' }
+    };
+
+    // Check folder freshness with debouncing
+    const checkFreshness = useCallback(async () => {
+        // Skip if syncing or disabled
+        if (folder.status === 'syncing' || !folder.enabled) return;
+
+        // Check cache
+        const lastCheck = freshnessCache.get(folder.id);
+        if (lastCheck && Date.now() - lastCheck < CACHE_TTL_MS) return;
+
+        setIsChecking(true);
+        try {
+            const { data } = await axios.get(`${API_BASE}/api/folders/${folder.id}/freshness`);
+            freshnessCache.set(folder.id, Date.now());
+
+            if (data.status === 'changes_pending') {
+                setComputedStatus('changes_pending');
+            } else {
+                setComputedStatus('up_to_date');
+            }
+        } catch {
+            // If check fails, fall back to last_session_status
+            if (folder.last_session_status === 'failed') {
+                setComputedStatus('error');
+            } else if (folder.last_session_status === 'partial') {
+                setComputedStatus('partial');
+            }
+        } finally {
+            setIsChecking(false);
+        }
+    }, [folder.id, folder.status, folder.enabled, folder.last_session_status]);
+
+    // Compute initial status based on folder data
+    useEffect(() => {
+        if (folder.status === 'syncing') {
+            setComputedStatus('syncing');
+            return;
+        }
+
+        if (folder.status === 'error') {
+            setComputedStatus('error');
+            return;
+        }
+
+        // Check last_session_status first
+        if (folder.last_session_status === 'failed') {
+            setComputedStatus('error');
+            return;
+        }
+
+        if (folder.last_session_status === 'partial') {
+            setComputedStatus('partial');
+            return;
+        }
+
+        // If no snapshot exists, treat as unknown
+        if (!folder.snapshot_fingerprint) {
+            setComputedStatus('unknown');
+            return;
+        }
+
+        // Default to up_to_date, let freshness check update if needed
+        setComputedStatus('up_to_date');
+    }, [folder.status, folder.last_session_status, folder.snapshot_fingerprint]);
+
+    // Trigger freshness check on mount (debounced)
+    useEffect(() => {
+        if (folder.snapshot_fingerprint && folder.status !== 'syncing') {
+            checkFreshness();
+        }
+    }, [folder.snapshot_fingerprint, folder.status, checkFreshness]);
+
+    const displayStatus = isChecking ? 'checking' : computedStatus;
+    const config = statusConfig[displayStatus];
+
+    const isClickable = displayStatus === 'error' || displayStatus === 'partial';
+
+    const lastSyncText = folder.last_sync
+        ? new Date(folder.last_sync).toLocaleString()
+        : 'Never';
+
+    const handleStatusClick = () => {
+        if (isClickable && onShowErrors) {
+            onShowErrors(folder.id);
+        }
+    };
+
+    return (
+        <div 
+            className="w-full max-w-full bg-surface border border-border p-4 hover:border-primary/50 transition-all overflow-hidden"
+            style={{ borderRadius: 'var(--radius-card)' }}
+        >
+            <div className="flex items-start justify-between gap-2 mb-3">
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                        <DynamicIcon name="folder-open" size={18} className="text-text-muted shrink-0" />
+                        <h3 className="text-text-main font-semibold truncate">
+                            <AnimatedText text={folder.name} />
+                        </h3>
+                    </div>
+                    <p className="text-xs text-text-muted font-mono truncate max-w-full block" title={folder.source_path}>{folder.source_path}</p>
+                </div>
+
+                <div
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium shrink-0 ${config.color} ${isClickable ? 'cursor-pointer hover:bg-surface-highlight' : ''}`}
+                    onClick={handleStatusClick}
+                    title={isClickable ? 'Click to view error details' : ''}
+                    style={{ borderRadius: 'var(--radius-button)' }}
+                >
+                    <DynamicIcon name={config.icon} size={14} className={displayStatus === 'syncing' || displayStatus === 'checking' ? 'animate-spin' : ''} />
+                    <span className="hidden sm:inline">{config.label}</span>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] mb-3">
+                <div className="truncate flex items-center gap-1.5">
+                    <span className="text-text-muted uppercase font-bold tracking-tighter">Preset:</span>
+                    <span className="text-text-main font-medium">{folder.preset_name || 'Unknown'}</span>
+                </div>
+                <div className="truncate flex items-center gap-1.5">
+                    <span className="text-text-muted uppercase font-bold tracking-tighter">Schedule:</span>
+                    <span className={`font-bold capitalize ${folder.schedule_type && folder.schedule_type !== 'none' ? 'text-primary' : 'text-text-muted'}`}>
+                        {folder.schedule_type || 'none'}
+                    </span>
+                </div>
+                <div className="col-span-1 sm:col-span-2 flex flex-col gap-0.5 pt-1 border-t border-border/30 mt-1">
+                    <div className="flex justify-between items-center">
+                        <span className="text-text-muted uppercase font-bold tracking-tighter">Last Sync:</span>
+                        <span className="text-text-muted font-mono">{lastSyncText}</span>
+                    </div>
+                    {folder.schedule_type && folder.schedule_type !== 'none' && folder.next_sync_due && (
+                        <div className="flex justify-between items-center">
+                            <span className="text-primary uppercase font-bold tracking-tighter">Next Due:</span>
+                            <span className="text-primary font-mono font-bold">
+                                {new Date(folder.next_sync_due).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="flex gap-2">
+                <button
+                    onClick={() => onRun(folder.id)}
+                    disabled={!folder.enabled || folder.status === 'syncing'}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary-hover disabled:bg-surface-highlight disabled:text-text-muted text-on-primary text-sm transition-all animate-scale-expand font-bold"
+                    style={{ borderRadius: 'var(--radius-button)' }}
+                >
+                    <DynamicIcon name="play" size={14} /> Run Now
+                </button>
+                <button
+                    onClick={() => onEdit(folder)}
+                    className="p-2 bg-primary/10 border border-primary/20 hover:bg-primary/20 text-primary transition-all flex items-center justify-center min-w-[40px]"
+                    style={{ borderRadius: 'var(--radius-button)' }}
+                    title="Edit Configuration"
+                >
+                    <DynamicIcon name="edit" size={16} />
+                </button>
+                <button
+                    onClick={() => onDelete(folder.id)}
+                    className="p-2 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 text-red-400 transition-all flex items-center justify-center min-w-[40px]"
+                    style={{ borderRadius: 'var(--radius-button)' }}
+                    title="Delete Sync"
+                >
+                    <DynamicIcon name="trash" size={16} />
+                </button>
+            </div>
+        </div>
+    );
+}

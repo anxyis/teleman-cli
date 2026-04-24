@@ -1,0 +1,138 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@theme {
+  /* Dynamic Color Tokens */
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-highlight: var(--surface-highlight);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-on-primary: var(--on-primary);
+  --color-text-main: var(--text-main);
+  --color-text-muted: var(--text-muted);
+
+  /* Radius Mapping: We map standard Tailwind names to our theme tokens 
+     so that existing components (using rounded-xl, etc.) react to the theme. */
+  --radius-xs: var(--radius-input);
+  --radius-sm: var(--radius-input);
+  --radius-md: var(--radius-button);
+  --radius-lg: var(--radius-card);
+  --radius-xl: var(--radius-card);
+  --radius-2xl: var(--radius-modal);
+  --radius-3xl: var(--radius-modal);
+}
+
+@layer base {
+  :root {
+    /* Layout Dimensions */
+    --h-header-mobile: 64px;
+    --h-nav-mobile: 96px;
+    --w-sidebar-desktop: 256px;
+
+    /* Base Fallback Theme (AMOLED-like) */
+    --canvas: #000000;
+    --surface: #121212;
+    --surface-highlight: #1E1E1E;
+    --border: #2D2D2D;
+    --primary: #BB86FC;
+    --primary-hover: #D0BCFF;
+    --on-primary: #000000;
+    --text-main: #FFFFFF;
+    --text-muted: #B0B0B0;
+
+    --radius-button: 12px;
+    --radius-card: 24px;
+    --radius-input: 12px;
+    --radius-modal: 24px;
+
+    --font-family: 'Gilroy', system-ui, sans-serif;
+    --font-size-base: 16px;
+    --heading-weight: 700;
+    --icon-stroke: 2;
+    --glass-opacity: 0.8;
+  }
+
+  html {
+    font-size: var(--font-size-base);
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-text-main);
+    font-family: var(--font-family);
+    @apply antialiased transition-colors duration-300;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: var(--heading-weight);
+  }
+
+  /* Force standard elements to use theme variables */
+  button, .btn, .chip, .badge {
+    border-radius: var(--radius-button) !important;
+    @apply transition-all active:scale-95;
+  }
+
+  input, textarea, select, .input-field {
+    border-radius: var(--radius-input) !important;
+  }
+
+  .card, .panel {
+    border-radius: var(--radius-card) !important;
+  }
+
+  /* Global Icon Stroke Control */
+  svg.lucide {
+    stroke-width: var(--icon-stroke) !important;
+  }
+
+  .glass-panel {
+    border-radius: var(--radius-card);
+    background-color: rgba(var(--surface), var(--glass-opacity));
+  }
+
+  /* Specific override for horizontal scroll containers to hide scrollbars */
+  .no-scrollbar {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none !important;
+  }
+}
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Hide scrollbar for IE, Edge and Firefox */
+  .no-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+}
+
+/* Custom Scrollbar using theme variables */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-surface); 
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-highlight); 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border); 
+}

@@ -1,0 +1,530 @@
+import { useState, useEffect } from 'react';
+import { DynamicIcon } from '../components/common/DynamicIcon';
+import { VitalSignsHeader } from '../components/VitalSignsHeader';
+import { FolderCard } from '../components/FolderCard';
+import { SystemStatusPanel } from '../components/SystemStatusPanel';
+import { useTheme } from '../context/ThemeContext';
+import { AddFolderModal } from '../components/AddFolderModal';
+import { ActiveJobCard } from '../components/ActiveJobCard';
+import { PresetManager } from '../components/PresetManager';
+import { DatabaseManager } from '../components/DatabaseManager';
+import { GroupCard } from '../components/GroupCard';
+import { GroupEditorModal } from '../components/GroupEditorModal';
+import { TargetsManager } from '../components/TargetsManager';
+import { QueueManager } from '../components/QueueManager';
+import { PageLayout } from '../components/layout/PageLayout';
+import axios from 'axios';
+
+export function AutoSyncer() {
+    const [folders, setFolders] = useState<any[]>([]);
+    const [queue, setQueue] = useState<any[]>([]);
+    const [presets, setPresets] = useState<any[]>([]);
+    const [stats, setStats] = useState<any>(null);
+    const [registry, setRegistry] = useState<any>(null);
+    const [activeJob, setActiveJob] = useState<any>(null);
+    const [showAddModal, setShowAddModal] = useState(false);
+    const [editingFolder, setEditingFolder] = useState<any>(null);
+    const [showPresetManager, setShowPresetManager] = useState(false);
+    const [showDbManager, setShowDbManager] = useState(false);
+    const [showTargetsManager, setShowTargetsManager] = useState(false);
+    const [showQueueManager, setShowQueueManager] = useState(false);
+    const [groups, setGroups] = useState<any[]>([]);
+    const [showGroupEditor, setShowGroupEditor] = useState(false);
+    const [editingGroup, setEditingGroup] = useState<any>(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [sortBy, setSortBy] = useState<'name' | 'last_run'>('name');
+    const { currentTheme } = useTheme();
+
+    const [showLogsButton, setShowLogsButton] = useState(() => {
+        return localStorage.getItem('showLogsButton') !== 'false';
+    });
+    const [fabMode, setFabMode] = useState(() => {
+        return localStorage.getItem('fabMode') === 'true';
+    });
+
+    const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+
+    useEffect(() => {
+        // Listen for toggle changes from SettingsModal
+        const handleSettingsChange = (e: CustomEvent) => {
+            if (e.detail.showLogsButton !== undefined) setShowLogsButton(e.detail.showLogsButton);
+            if (e.detail.fabMode !== undefined) setFabMode(e.detail.fabMode);
+        };
+        window.addEventListener('settingsChanged', handleSettingsChange as EventListener);
+        return () => window.removeEventListener('settingsChanged', handleSettingsChange as EventListener);
+    }, []);
+
+    useEffect(() => {
+        refreshAll();
+        const interval = setInterval(fetchStats, 2500);
+        return () => clearInterval(interval);
+    }, []);
+
+    const refreshAll = async () => {
+        await Promise.all([loadFolders(), loadGroups(), loadPresets(), fetchStats()]);
+    };
+
+    const loadFolders = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/folders`);
+            setFolders(res.data);
+        } catch (e) {
+            console.error('Failed to load folders', e);
+        }
+    };
+
+    const loadGroups = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/groups`);
+            setGroups(res.data);
+        } catch (e) {
+            console.error('Failed to load groups', e);
+        }
+    };
+
+    const loadPresets = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/presets`);
+            setPresets(res.data);
+        } catch (e) {
+            console.error('Failed to load presets', e);
+        }
+    };
+
+    const fetchStats = async () => {
+        try {
+            const [statsRes, jobRes, registryRes, queueRes] = await Promise.all([
+                axios.get(`${API_BASE}/api/stats`),
+                axios.get(`${API_BASE}/api/job/current`).catch(() => ({ data: null })),
+                axios.get(`${API_BASE}/api/registry/stats`).catch(() => ({ data: null })),
+                axios.get(`${API_BASE}/api/queue`).catch(() => ({ data: [] }))
+            ]);
+
+            setStats(statsRes.data);
+            if (registryRes.data) setRegistry(registryRes.data);
+            if (queueRes.data) setQueue(queueRes.data);
+
+            const jobData = jobRes.data;
+            if (jobData && jobData.status !== 'completed' && jobData.status !== 'failed' && jobData.status !== 'idle') {
+                setActiveJob({
+                    jobId: jobData.jobId,
+                    status: jobData.status,
+                    name: jobData.name,
+                    currentFile: jobData.currentFile || 'Initializing...',
+                    progress: jobData.totalFilesDiscovered > 0
+                        ? (jobData.filesSent / jobData.totalFilesDiscovered) * 100
+                        : 0,
+                    speed: jobData.speed || '--',
+                    eta: jobData.eta || '--',
+                    processedSize: `${(jobData.totalBytesSent / 1024 / 1024).toFixed(2)} MB`,
+                    totalSize: '?'
+                });
+            } else {
+                setActiveJob(null);
+            }
+        } catch (e) {
+            console.error('Stats poll failed', e);
+        }
+    };
+
+    const handleSaveConfig = async (folder: any) => {
+        try {
+            if (editingFolder) {
+                await axios.put(`${API_BASE}/api/folders/${editingFolder.id}`, folder);
+            } else {
+                await axios.post(`${API_BASE}/api/folders`, folder);
+            }
+            setShowAddModal(false);
+            setEditingFolder(null); // Reset
+            loadFolders();
+        } catch (e) {
+            alert('Failed to save folder configuration. Check for duplicates or errors.');
+        }
+    };
+
+    const handleEdit = (folder: any) => {
+        setEditingFolder(folder);
+        setShowAddModal(true);
+    };
+
+    const handleRunFolder = async (folderId: string) => {
+        try {
+            await axios.post(`${API_BASE}/api/folders/${folderId}/run`);
+        } catch (e: any) {
+            if (e.response?.data?.error === "NO_BOT_TOKEN") {
+                alert("Please add a Bot Token in Settings first.");
+            } else {
+                alert('Failed to start sync');
+            }
+        }
+    };
+
+    const handleDeleteFolder = async (folderId: string) => {
+        if (!confirm('Delete this folder configuration?')) return;
+        try {
+            await axios.delete(`${API_BASE}/api/folders/${folderId}`);
+            loadFolders();
+        } catch (e) {
+            alert('Failed to delete folder');
+        }
+    };
+
+    const handleSkipFile = async () => {
+        try {
+            await axios.post(`${API_BASE}/api/job/skip`);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const handleCancelJob = async (deleteSent: boolean) => {
+        try {
+            await axios.post(`${API_BASE}/api/job/cancel`, { deleteSent });
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const handleSaveGroup = async (groupData: any) => {
+        try {
+            if (editingGroup) {
+                await axios.put(`${API_BASE}/api/groups/${editingGroup.id}`, groupData);
+            } else {
+                await axios.post(`${API_BASE}/api/groups`, groupData);
+            }
+            setShowGroupEditor(false);
+            setEditingGroup(null);
+            refreshAll();
+        } catch (e) {
+            alert('Failed to save group.');
+        }
+    };
+
+    const handleDeleteGroup = async (id: string) => {
+        if (!confirm('Delete this sync group?')) return;
+        try {
+            await axios.delete(`${API_BASE}/api/groups/${id}`);
+            refreshAll();
+        } catch (e) {
+            alert('Failed to delete group');
+        }
+    };
+
+    const handleRunGroup = async (id: string) => {
+        try {
+            await axios.post(`${API_BASE}/api/groups/${id}/run`);
+        } catch (e: any) {
+            if (e.response?.data?.error === "NO_BOT_TOKEN") {
+                alert("Please add a Bot Token in Settings first.");
+            } else {
+                alert('Failed to start group sync');
+            }
+        }
+    };
+
+    const handleRemoveFromQueue = async (id: string) => {
+        try {
+            await axios.delete(`${API_BASE}/api/queue/${id}`);
+            const res = await axios.get(`${API_BASE}/api/queue`);
+            setQueue(res.data);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const handleReorderQueue = async (newIds: string[]) => {
+        // Optimistic update
+        const reorderedQueue: any[] = [];
+        newIds.forEach(id => {
+            const item = queue.find(i => i.id === id);
+            if (item) reorderedQueue.push(item);
+        });
+        queue.forEach(item => { if (!newIds.includes(item.id)) reorderedQueue.push(item); });
+
+        setQueue(reorderedQueue);
+
+        try {
+            await axios.post(`${API_BASE}/api/queue/reorder`, { ids: newIds });
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const handleClearQueue = async () => {
+        if (!confirm("Clear all queued jobs?")) return;
+        try {
+            await axios.post(`${API_BASE}/api/queue/clear`);
+            setQueue([]);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const filteredGroups = groups
+        .filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        .sort((a, b) => {
+            if (sortBy === 'name') return a.name.localeCompare(b.name);
+            return (b.last_run || 0) - (a.last_run || 0);
+        });
+
+    const filteredFolders = folders
+        .filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        .sort((a, b) => {
+            if (sortBy === 'name') return a.name.localeCompare(b.name);
+            return (b.last_sync || 0) - (a.last_sync || 0);
+        });
+
+    return (
+        <PageLayout
+            sidebar={
+                <div className="h-full flex flex-col p-4">
+                    <SystemStatusPanel stats={stats} registry={registry} />
+                </div>
+            }
+            header={
+                currentTheme?.id === 'legacy' ? (
+                    <div className="w-full flex items-center justify-between py-2">
+                         <h1 className="text-xl font-bold text-text-main flex items-center gap-2">
+                             Auto-Syncer
+                         </h1>
+                    </div>
+                ) : null
+            }
+        >
+            <div className="space-y-6">
+                <VitalSignsHeader stats={stats} />
+
+                {/* Header & Title */}
+                <div className="flex flex-col gap-4">
+                    {/* Title is hidden in modern mode as it's in the header, shown in legacy */}
+                    {currentTheme?.id === 'legacy' && (
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h1 className="text-2xl font-bold text-text-main flex items-center gap-3">
+                                    Auto-Syncer
+                                </h1>
+                                <p className="text-text-muted text-sm">File synchronization</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Scrollable Action Buttons */}
+                    <div className="flex overflow-x-auto gap-3 py-2 no-scrollbar snap-x snap-mandatory -mx-4 px-4 sm:mx-0 sm:px-0 scroll-smooth items-center">
+                        <button
+                            onClick={() => setShowPresetManager(true)}
+                            className="snap-start shrink-0 flex items-center gap-2 px-4 py-3 bg-surface-highlight hover:bg-surface-highlight/80 text-text-main active:text-primary active:bg-primary/10 font-medium transition-all active:scale-95 min-w-max border border-transparent hover:border-border/50"
+                            style={{ borderRadius: 'var(--radius-button)' }}
+                        >
+                            <DynamicIcon name="layers" size={16} />
+                            <span>Presets</span>
+                        </button>
+                        <button
+                            onClick={() => setShowDbManager(true)}
+                            className="snap-start shrink-0 flex items-center gap-2 px-4 py-3 bg-surface-highlight hover:bg-surface-highlight/80 text-text-main active:text-primary active:bg-primary/10 font-medium transition-all active:scale-95 min-w-max border border-transparent hover:border-border/50"
+                            style={{ borderRadius: 'var(--radius-button)' }}
+                        >
+                            <DynamicIcon name="database" size={16} />
+                            <span>Database</span>
+                        </button>
+                        <button
+                            onClick={() => setShowTargetsManager(true)}
+                            className="snap-start shrink-0 flex items-center gap-2 px-4 py-3 bg-surface-highlight hover:bg-surface-highlight/80 text-text-main active:text-primary active:bg-primary/10 font-medium transition-all active:scale-95 min-w-max border border-transparent hover:border-border/50"
+                            style={{ borderRadius: 'var(--radius-button)' }}
+                        >
+                            <DynamicIcon name="target" size={16} />
+                            <span>Targets</span>
+                        </button>
+                        <button
+                            onClick={() => setShowQueueManager(true)}
+                            className="relative snap-start shrink-0 flex items-center gap-2 px-4 py-3 bg-surface-highlight hover:bg-surface-highlight/80 text-text-main active:text-primary active:bg-primary/10 font-medium transition-all active:scale-95 min-w-max border border-transparent hover:border-border/50"
+                            style={{ borderRadius: 'var(--radius-button)' }}
+                        >
+                            <DynamicIcon name="play-circle" size={16} />
+                            <span>Queue</span>
+                            {queue.length > 0 && (
+                                <span 
+                                    className="absolute -top-1 -right-1 w-5 h-5 bg-primary text-on-primary text-[10px] font-bold flex items-center justify-center shadow-sm transition-all"
+                                    style={{ borderRadius: 'var(--radius-button)' }}
+                                >
+                                    {queue.length}
+                                </span>
+                            )}
+                        </button>
+                        {showLogsButton && (
+                            <button
+                                onClick={() => window.location.href = '/autosyncer/logs'}
+                                className="snap-start shrink-0 flex items-center gap-2 px-4 py-3 bg-surface-highlight hover:bg-surface-highlight/80 text-text-main active:text-primary active:bg-primary/10 font-medium transition-all active:scale-95 min-w-max border border-transparent hover:border-border/50"
+                                style={{ borderRadius: 'var(--radius-button)' }}
+                            >
+                                <DynamicIcon name="file-text" size={16} />
+                                <span>Logs</span>
+                            </button>
+                        )}
+
+                        {!fabMode && (
+                            <button
+                                onClick={() => setShowAddModal(true)}
+                                className="snap-start shrink-0 ml-auto flex items-center gap-2 px-5 py-3 bg-primary hover:bg-primary-hover text-on-primary font-bold transition-all shadow-lg shadow-primary/20 whitespace-nowrap min-w-max active:scale-95"
+                                style={{ borderRadius: 'var(--radius-button)' }}
+                            >
+                                <DynamicIcon name="plus" size={18} /> <span>New Sync</span>
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* Active Job Monitor */}
+                {activeJob && (
+                    <ActiveJobCard
+                        job={activeJob}
+                        onCancel={handleCancelJob}
+                        onSkip={handleSkipFile}
+                    />
+                )}
+
+                {/* Folders & Groups Content (Now full width inside main, sidebar handled by PageLayout) */}
+                <div className="space-y-6">
+
+                        {/* Search & Toolbar */}
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            <div className="relative flex-1">
+                                <DynamicIcon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={18} />
+                                <input
+                                    type="text"
+                                    placeholder="Search folders..."
+                                    value={searchQuery}
+                                    onChange={e => setSearchQuery(e.target.value)}
+                                    className="w-full bg-surface-highlight border-none rounded-xl pl-10 pr-4 py-3 text-text-main focus:ring-2 focus:ring-primary/50 outline-none text-base"
+                                />
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setSortBy(sortBy === 'name' ? 'last_run' : 'name')}
+                                    className="flex-1 sm:flex-none justify-center px-4 py-3 bg-surface hover:bg-surface-highlight rounded-xl text-text-muted hover:text-text-main flex items-center gap-2 transition-colors"
+                                >
+                                    <DynamicIcon name="sort" size={18} />
+                                    <span className="text-sm">{sortBy === 'name' ? 'Name' : 'Recent'}</span>
+                                </button>
+
+                                <button
+                                    onClick={() => setShowGroupEditor(true)}
+                                    className="flex-1 sm:flex-none justify-center flex items-center gap-2 px-4 py-3 bg-surface hover:bg-surface-highlight border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 font-medium rounded-xl transition-colors whitespace-nowrap"
+                                >
+                                    <DynamicIcon name="plus" size={18} /> <span className="text-sm">Group</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* GROUPS LIST */}
+                        <div>
+                            {filteredGroups.length > 0 && (
+                                <div className="space-y-4 mb-8">
+                                    <h2 className="text-lg font-bold text-text-main flex items-center gap-2">
+                                        <DynamicIcon name="layers" size={20} className="text-emerald-400" />
+                                        Sync Groups
+                                    </h2>
+                                    <div className="grid gap-4">
+                                        {filteredGroups.map(group => (
+                                            <GroupCard
+                                                key={group.id}
+                                                group={group}
+                                                onRun={handleRunGroup}
+                                                onEdit={(g) => { setEditingGroup(g); setShowGroupEditor(true); }}
+                                                onDelete={handleDeleteGroup}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* FOLDERS LIST (Legacy/Single) */}
+                        <div>
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-lg font-bold text-text-main">Single Folders</h2>
+                            </div>
+
+                            {filteredFolders.length === 0 && filteredGroups.length === 0 ? (
+                                <div className="bg-surface rounded-xl p-12 text-center text-text-muted">
+                                    <p>No sync configurations found.</p>
+                                    <button onClick={() => setShowAddModal(true)} className="mt-4 text-primary font-medium">Create your first sync</button>
+                                </div>
+                            ) : (
+                                <div className="grid gap-4">
+                                    {filteredFolders.map(folder => (
+                                        <FolderCard
+                                            key={folder.id}
+                                            folder={folder}
+                                            onRun={handleRunFolder}
+                                            onDelete={handleDeleteFolder}
+                                            onEdit={handleEdit}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+            </div>
+
+            {/* Floating Action Button (if enabled) */}
+            {fabMode && (
+                <button
+                    onClick={() => setShowAddModal(true)}
+                    className="fixed bottom-24 right-6 z-50 p-4 bg-primary text-on-primary rounded-2xl shadow-2xl shadow-primary/30 transition-transform hover:scale-105 active:scale-95 animate-in slide-in-from-bottom-10"
+                >
+                    <DynamicIcon name="plus" size={28} />
+                </button>
+            )}
+
+            {/* Modals */}
+            {showAddModal && (
+                <AddFolderModal
+                    presets={presets}
+                    initialData={editingFolder}
+                    onSave={handleSaveConfig}
+                    onCancel={() => { setShowAddModal(false); setEditingFolder(null); }}
+                />
+            )}
+
+            {showGroupEditor && (
+                <GroupEditorModal
+                    presets={presets}
+                    initialGroup={editingGroup}
+                    onSave={handleSaveGroup}
+                    onCancel={() => { setShowGroupEditor(false); setEditingGroup(null); }}
+                />
+            )}
+
+
+            {showPresetManager && (
+                <PresetManager
+                    presets={presets}
+                    onClose={() => setShowPresetManager(false)}
+                    onRefresh={loadPresets}
+                />
+            )}
+
+            <DatabaseManager
+                isOpen={showDbManager}
+                onClose={() => setShowDbManager(false)}
+            />
+
+            <TargetsManager
+                isOpen={showTargetsManager}
+                onClose={() => setShowTargetsManager(false)}
+            />
+
+            <QueueManager
+                isOpen={showQueueManager}
+                onClose={() => setShowQueueManager(false)}
+                activeJob={activeJob}
+                queue={queue}
+                onCancelJob={() => handleCancelJob(false)}
+                onRemoveFromQueue={handleRemoveFromQueue}
+                onReorderQueue={handleReorderQueue}
+                onClearQueue={handleClearQueue}
+            />
+
+        </PageLayout>
+    );
+}

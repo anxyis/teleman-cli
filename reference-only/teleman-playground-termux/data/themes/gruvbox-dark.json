@@ -1,0 +1,48 @@
+{
+  "id": "gruvbox-dark",
+  "name": "Gruvbox Dark",
+  "author": "Pavel Pertsev",
+  "type": "dark",
+  "tokens": {
+    "colors": {
+      "canvas": "#282828",
+      "surface": "#3c3836",
+      "surfaceHighlight": "#504945",
+      "border": "#3c3836",
+      "primary": "#83a598",
+      "primaryHover": "#d3869b",
+      "onPrimary": "#282828",
+      "textMain": "#ebdbb2",
+      "textMuted": "#928374"
+    },
+    "radii": {
+      "button": "2px",
+      "card": "2px",
+      "input": "2px",
+      "modal": "4px",
+      "navbar": "100px"
+    },
+    "typography": {
+      "fontFamily": "system-ui, sans-serif",
+      "baseSize": "15px",
+      "headingWeight": "700"
+    },
+    "effects": {
+      "glassOpacity": "1.0",
+      "shadowCard": "none",
+      "buttonTransform": "translateY(2px)",
+      "glow": true
+    },
+    "icons": {
+      "strokeWidth": "2"
+    }
+  },
+  "background": {
+    "enabled": false,
+    "imagePath": "",
+    "opacity": 0.5,
+    "cardTransparency": 0.85,
+    "glassBlur": false,
+    "blurIntensity": 10
+  }
+}

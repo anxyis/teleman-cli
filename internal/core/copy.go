@@ -10,11 +10,8 @@ import (
 	"sync/atomic"
 
 	"github.com/teleman-cli/teleman/internal/chunker"
-	"github.com/teleman-cli/teleman/internal/config"
-	"github.com/teleman-cli/teleman/internal/index"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
-	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
 // fileTask is a local struct used by the copy pipeline.
@@ -31,61 +28,9 @@ type copyFileTask struct {
 // is actual work to do. If all files are already in sync, the function returns
 // without ever acquiring the distributed lock or committing a new index version.
 func RunCopy(ctx context.Context, source, targetRaw string, opts *models.TransferOptions) error {
-	// 1. Load config
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %v", err)
-	}
-	if cfg.ActiveToken == "" {
-		return fmt.Errorf("no bot token found. Run 'teleman config' first")
-	}
-
-	// 2. Parse Target (alias:virtual_path)
-	parts := strings.SplitN(targetRaw, ":", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid target format. Use alias:virtual/path")
-	}
-	alias, virtualRoot := parts[0], parts[1]
-
-	target, ok := cfg.Targets[alias]
-	if !ok {
-		return fmt.Errorf("target alias '%s' not found. Run 'teleman config'", alias)
-	}
-
-	// 3. API Connectivity Check
-	logger.Step("=> Initializing API Client...")
-	client := telegram.NewSmartClient(cfg.ActiveToken, cfg.APIHosts, cfg.FileServerHosts)
-	
-	if opts.AutoUpgradeChunk && !strings.Contains(client.APIHost, "api.telegram.org") {
-		logger.Info("   [Auto-Detect] Local API detected. Upgrading chunk size from 49M to 1999M limit.")
-		opts.ChunkSize = 1999 * 1024 * 1024
-	}
-
-	me, err := client.GetMeCtx(ctx)
-	if err != nil {
-		return fmt.Errorf("API connectivity failed: %v", err)
-	}
-	logger.Debug("   Connected as: %s", me["first_name"])
-
-	// 4. Validate Target Permissions
-	logger.Step("=> Validating target chat permissions...")
-	if err := client.GetChat(target.ChatID); err != nil {
-		if target.Type == "user" {
-			logger.Warn("   [Warning] Could not validate user chat (%v). Proceeding assuming bot has access.", err)
-		} else {
-			return fmt.Errorf("target validation failed: %v", err)
-		}
-	}
-
-	// 5. Initialize index manager (no lock yet)
-	mgr, err := index.NewManager(client, cfg.IndexChannelID)
+	tctx, err := InitContext(ctx, targetRaw, opts)
 	if err != nil {
 		return err
-	}
-
-	targetKey := target.ChatID
-	if target.ThreadID != "" {
-		targetKey += ":" + target.ThreadID
 	}
 
 	// Validate source exists
@@ -94,7 +39,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		return fmt.Errorf("source error: %v", err)
 	}
 
-	engine := chunker.NewEngineWithSize(client, opts.MediaMode, opts.ChunkSize)
+	engine := chunker.NewEngineWithSize(tctx.Client, opts.MediaMode, opts.ChunkSize)
 
 	// ── Archive mode (--zip or --tgz) ────────────────────────────────────────
 	// Archives are always a new upload — no pre-flight diff needed. Acquire the
@@ -107,7 +52,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			archiveLabel = "tar.gz"
 		}
 
-		vPath := fmt.Sprintf("%s/%s%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source), archiveExt)
+		vPath := fmt.Sprintf("%s/%s%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source), archiveExt)
 		vPath = strings.TrimLeft(vPath, "/")
 
 		if opts.DryRun {
@@ -116,18 +61,18 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		}
 
 		// Acquire lock for the write path
-		if err := mgr.AcquireLock("", "copy"); err != nil {
+		if err := tctx.IdxManager.AcquireLock("", "copy"); err != nil {
 			return fmt.Errorf("failed to acquire lock: %v", err)
 		}
-		defer mgr.ReleaseLock()
+		defer tctx.IdxManager.ReleaseLock()
 
 		logger.Step("=> Loading Virtual Index...")
-		idx, err := mgr.Load()
+		idx, err := tctx.IdxManager.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load index: %v", err)
 		}
-		if idx.Targets[targetKey] == nil {
-			idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+		if idx.Targets[tctx.TargetKey] == nil {
+			idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
 		}
 
 		logger.Step("=> Archiving '%s' on-the-fly (%s) to %s", source, archiveLabel, vPath)
@@ -145,7 +90,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			return fmt.Errorf("failed to initialize %s stream: %v", archiveLabel, err)
 		}
 
-		chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(vPath), r, opts.Password)
+		chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(vPath), r, opts.Password)
 		if err != nil {
 			return fmt.Errorf("upload failed: %v", err)
 		}
@@ -154,7 +99,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		for _, c := range chunks {
 			totalSize += c.Size
 		}
-		idx.Targets[targetKey][vPath] = &models.FileEntry{
+		idx.Targets[tctx.TargetKey][vPath] = &models.FileEntry{
 			Size:    totalSize,
 			ModTime: info.ModTime().Unix(),
 			Chunks:  chunks,
@@ -163,7 +108,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		logger.Success("      Success! %d chunks uploaded (%d bytes)", len(chunks), totalSize)
 
 		logger.Step("=> Committing new index to Telegram...")
-		if err := mgr.PushVersion(idx); err != nil {
+		if err := tctx.IdxManager.PushVersion(idx); err != nil {
 			return fmt.Errorf("failed to push index: %v", err)
 		}
 		logger.Success("=> Copy operation completed successfully.")
@@ -176,12 +121,12 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 	// has changed we return immediately — no lock acquired, no index committed.
 
 	logger.Step("=> Loading Virtual Index...")
-	idx, err := mgr.Load()
+	idx, err := tctx.IdxManager.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load index: %v", err)
 	}
-	if idx.Targets[targetKey] == nil {
-		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+	if idx.Targets[tctx.TargetKey] == nil {
+		idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
 	}
 
 	// Collect all source files
@@ -190,14 +135,14 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		filepath.Walk(source, func(path string, fi os.FileInfo, err error) error {
 			if err == nil && !fi.IsDir() {
 				rel, _ := filepath.Rel(source, path)
-				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
+				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
 				vPath = strings.TrimLeft(vPath, "/")
 				allFiles = append(allFiles, copyFileTask{localPath: path, virtualPath: vPath, fileInfo: fi})
 			}
 			return nil
 		})
 	} else {
-		vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
+		vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
 		vPath = strings.TrimLeft(vPath, "/")
 		allFiles = append(allFiles, copyFileTask{localPath: source, virtualPath: vPath, fileInfo: info})
 	}
@@ -210,7 +155,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		var wouldUpload []copyFileTask
 		for _, t := range allFiles {
 			if !opts.Force {
-				if existing, ok := idx.Targets[targetKey][t.virtualPath]; ok {
+				if existing, ok := idx.Targets[tctx.TargetKey][t.virtualPath]; ok {
 					if existing.Size == t.fileInfo.Size() && existing.ModTime == t.fileInfo.ModTime().Unix() {
 						continue
 					}
@@ -241,7 +186,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			defer wgPre.Done()
 			for task := range preChan {
 				if !opts.Force {
-					if existing, ok := idx.Targets[targetKey][task.virtualPath]; ok {
+					if existing, ok := idx.Targets[tctx.TargetKey][task.virtualPath]; ok {
 						if existing.Size == task.fileInfo.Size() && existing.ModTime == task.fileInfo.ModTime().Unix() {
 							preSkipped.Add(1)
 							logger.Debug("   [Skipped] %s (Unchanged)", task.virtualPath)
@@ -274,18 +219,18 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 	// ── Actual work: acquire lock, reload index, re-diff, upload ─────────────
 	// We reload the index under the lock so that any concurrent uploads from
 	// another instance are respected (TOCTOU safety).
-	if err := mgr.AcquireLock("", "copy"); err != nil {
+	if err := tctx.IdxManager.AcquireLock("", "copy"); err != nil {
 		return fmt.Errorf("failed to acquire lock: %v", err)
 	}
-	defer mgr.ReleaseLock()
+	defer tctx.IdxManager.ReleaseLock()
 
 	// Reload index under lock to pick up any changes since our pre-flight read
-	idx, err = mgr.Load()
+	idx, err = tctx.IdxManager.Load()
 	if err != nil {
 		return fmt.Errorf("failed to reload index under lock: %v", err)
 	}
-	if idx.Targets[targetKey] == nil {
-		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+	if idx.Targets[tctx.TargetKey] == nil {
+		idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
 	}
 
 	// Re-diff: filter the pre-flight upload list against the freshly-loaded index
@@ -300,7 +245,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			defer wgCheck.Done()
 			for task := range tasksChan {
 				if !opts.Force {
-					if existing, ok := idx.Targets[targetKey][task.virtualPath]; ok {
+					if existing, ok := idx.Targets[tctx.TargetKey][task.virtualPath]; ok {
 						if existing.Size == task.fileInfo.Size() && existing.ModTime == task.fileInfo.ModTime().Unix() {
 							reSkipped.Add(1)
 							logger.Debug("   [Skipped] %s (Unchanged — updated by concurrent upload)", task.virtualPath)
@@ -363,7 +308,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 					continue
 				}
 
-				chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.virtualPath), f, opts.Password)
+				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.virtualPath), f, opts.Password)
 				f.Close()
 				if err != nil {
 					logger.Error("      Upload Failed: %v", err)
@@ -372,7 +317,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 				}
 
 				idxMutex.Lock()
-				idx.Targets[targetKey][task.virtualPath] = &models.FileEntry{
+				idx.Targets[tctx.TargetKey][task.virtualPath] = &models.FileEntry{
 					Size:    task.fileInfo.Size(),
 					ModTime: task.fileInfo.ModTime().Unix(),
 					Chunks:  chunks,
@@ -398,7 +343,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 	logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors", successCount, totalSkipped, uploadErrors.Load())
 
 	logger.Step("=> Committing new index to Telegram...")
-	if err := mgr.PushVersion(idx); err != nil {
+	if err := tctx.IdxManager.PushVersion(idx); err != nil {
 		return fmt.Errorf("failed to push index: %v", err)
 	}
 

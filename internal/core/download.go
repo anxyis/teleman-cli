@@ -9,11 +9,8 @@ import (
 	"strings"
 
 	"github.com/teleman-cli/teleman/internal/chunker"
-	"github.com/teleman-cli/teleman/internal/config"
-	"github.com/teleman-cli/teleman/internal/index"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
-	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
 // RunDownload handles downloading files from a virtual Telegram target to the local filesystem.
@@ -21,64 +18,28 @@ import (
 // prefix boundaries, and reassembles chunks via the chunker engine's verified pipeline.
 // Accepts context for graceful shutdown and TransferOptions for consistent flag handling.
 func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.TransferOptions) error {
-	// 1. Load config
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %v", err)
-	}
-	if cfg.ActiveToken == "" {
-		return fmt.Errorf("no bot token found. Run 'teleman config' first")
-	}
-
-	// 2. Parse Target (alias:virtual_path)
-	parts := strings.SplitN(targetRaw, ":", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid target format. Use alias:virtual/path")
-	}
-	alias, virtualRoot := parts[0], parts[1]
-
-	target, ok := cfg.Targets[alias]
-	if !ok {
-		return fmt.Errorf("target alias '%s' not found. Run 'teleman config'", alias)
-	}
-
-	// 3. API Connectivity Check
-	logger.Step("=> Initializing API Client...")
-	client := telegram.NewSmartClient(cfg.ActiveToken, cfg.APIHosts, cfg.FileServerHosts)
-	me, err := client.GetMeCtx(ctx)
-	if err != nil {
-		return fmt.Errorf("API connectivity failed: %v", err)
-	}
-	logger.Debug("   Connected as: %s", me["first_name"])
-
-	// 4. Initialize Index & Chunker Engine
-	mgr, err := index.NewManager(client, cfg.IndexChannelID)
+	tctx, err := InitContext(ctx, targetRaw, opts)
 	if err != nil {
 		return err
 	}
-	engine := chunker.NewEngine(client, false) // mediaMode irrelevant for download
+
+	engine := chunker.NewEngine(tctx.Client, false) // mediaMode irrelevant for download
 
 	logger.Step("=> Loading Virtual Index...")
-	idx, err := mgr.Load()
+	idx, err := tctx.IdxManager.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load index: %v", err)
 	}
 
-	// 5. Resolve namespaced target key
-	targetKey := target.ChatID
-	if target.ThreadID != "" {
-		targetKey += ":" + target.ThreadID
-	}
-
-	targetFiles, ok := idx.Targets[targetKey]
+	targetFiles, ok := idx.Targets[tctx.TargetKey]
 	if !ok || len(targetFiles) == 0 {
-		logger.Info("(No files found in target '%s')", alias)
+		logger.Info("(No files found in target)")
 		return nil
 	}
 
 	// 6. Match files using safe prefix matching
 	// Avoids partial prefix collisions (e.g. "media" should NOT match "media_test/file.txt")
-	virtualPrefix := strings.TrimLeft(virtualRoot, "/")
+	virtualPrefix := strings.TrimLeft(tctx.VirtualRoot, "/")
 	var matchedPaths []string
 
 	for vPath := range targetFiles {

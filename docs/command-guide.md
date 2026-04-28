@@ -25,12 +25,14 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
    - [Whole Directories](#directory-download)
    - [Encrypted Downloads](#encrypted-downloads)
    - [Password Priority](#password-priority)
-8. [Best Performance & Multi-Threading](#8-best-performance--multi-threading)
-   - [Tuning for a Local Bot API Server](#tuning-for-a-local-bot-api-server)
-   - [Tuning for Telegram's Cloud API](#tuning-for-telegrams-cloud-api)
-9. [Output Control](#9-output-control)
-10. [Common Scenario Recipes](#10-common-scenario-recipes)
-11. [Flag Reference Table](#11-flag-reference-table)
+8. [Deleting Files (`delete`)](#8-deleting-files-delete)
+9. [Purging Directories (`purge`)](#9-purging-directories-purge)
+10. [Best Performance & Multi-Threading](#10-best-performance--multi-threading)
+    - [Tuning for a Local Bot API Server](#tuning-for-a-local-bot-api-server)
+    - [Tuning for Telegram's Cloud API](#tuning-for-telegrams-cloud-api)
+11. [Output Control](#11-output-control)
+12. [Common Scenario Recipes](#12-common-scenario-recipes)
+13. [Flag Reference Table](#13-flag-reference-table)
 
 ---
 
@@ -297,6 +299,44 @@ See [security.md](./security.md) for full encryption architecture details.
 
 ---
 
+## 8. Deleting Files (`delete`)
+
+The `delete` command removes files from the virtual index and physically deletes the chunks from Telegram. By default, it is **non-recursive** (it only matches files directly in the specified path).
+
+```bash
+# Delete a single file from a target
+teleman delete backup:reports/2023_tax.pdf
+
+# Delete all files directly under a folder (non-recursive)
+# This will NOT touch files in sub-folders like reports/2024/
+teleman delete backup:reports/
+
+# Preview what would be deleted without actually doing it
+teleman delete backup:legacy/ --dry-run
+```
+
+## 9. Purging Directories (`purge`)
+
+The `purge` command is the recursive counterpart to `delete`. It removes everything starting with the virtual path prefix.
+
+> **Warning:** This is a destructive operation. By default, it will ask for confirmation before proceeding.
+
+```bash
+# Recursively delete a directory and all its sub-folders
+teleman purge remote:old_projects/
+
+# Bypass the confirmation prompt (good for scripts)
+teleman purge remote:temp/ --confirm
+
+# Purge an entire target root (DANGER: Wipes the entire alias!)
+teleman purge remote: --confirm
+
+# Use more workers to speed up physical deletion of thousands of chunks
+teleman purge backup:archive/ -t 16 --confirm
+```
+
+---
+
 ## 8. Best Performance & Multi-Threading
 
 Teleman exposes two concurrency pools you can tune:
@@ -452,6 +492,14 @@ teleman download backup:projects/my-app/ ./restored/
 |---|---|---|---|
 | `--password` | — | `""` | Decryption password (prefer `TELEMAN_PASSWORD` env var) |
 | `--dry-run` | — | `false` | Preview what would be downloaded without making changes |
+
+### Deletion Flags (`delete`, `purge`)
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--confirm` | — | `false` | Bypass the interactive confirmation prompt (Purge only) |
+| `--transfers` | `-t` | `4` | Number of parallel physical deletion workers |
+| `--dry-run` | — | `false` | Preview what would be deleted without making changes |
 
 ### Global Flags (all commands)
 

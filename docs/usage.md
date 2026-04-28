@@ -76,8 +76,24 @@ teleman move ./OldProjects/ archive:legacy/ -t 8 -c 16
 teleman move ./Temp/ remote: --dry-run
 ```
 
-### Sync Files (In Development)
+### Sync Files
 Brings your remote destination into identical parity with your local endpoint. *Warning: Sync **will** delete files on the remote destination if they no longer exist on your physical computer.*
+```bash
+teleman sync ./LocalFolder/ remote:RemoteFolder/
+```
+
+### Delete Files (`delete`)
+Removes files from the virtual index and Telegram. **Non-recursive** by default (only affects the immediate path).
+```bash
+teleman delete backup:temp_file.txt
+teleman delete remote:logs/ # Deletes files in logs/, but not in logs/2024/
+```
+
+### Purge Directories (`purge`)
+Recursive deletion of everything under a virtual path. Requires a confirmation prompt unless `--confirm` is used.
+```bash
+teleman purge backup:old_backups/ --confirm
+```
 
 ## 3. High-Performance Flags
 
@@ -99,8 +115,9 @@ Teleman natively utilizes all logical CPU cores available to it. You can tightly
   - `--force` (`-f`): Bypasses index diffing. Forces immediate re-upload of all files.
 - **Preview Mode**:
   - `--dry-run`: Shows what would be transferred without making any changes. Works with `copy`, `sync`, `move`, and `download`.
-- **Download**:
+- **Download & Deletion**:
   - `--password`: Supply decryption password. Prefer `TELEMAN_PASSWORD` env var (hidden from process list) or interactive prompt.
+  - `--confirm`: Bypasses the confirmation prompt for destructive `purge` operations.
 - **Output Control**:
   - `--verbose` (`-v`): Unlocks maximal debug and index chunk inspection data.
   - `--quiet` (`-q`): Completely suppresses the terminal to silent mode. Output isolated strictly to fatal crashes.

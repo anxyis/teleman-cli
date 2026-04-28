@@ -1,10 +1,13 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/config"
@@ -14,8 +17,20 @@ import (
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
-// RunCopy handles a minimal upload path for the given source and target
-func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
+// fileTask is a local struct used by the copy pipeline.
+type copyFileTask struct {
+	localPath   string
+	virtualPath string
+	fileInfo    os.FileInfo
+}
+
+// RunCopy handles a minimal upload path for the given source and target.
+// Accepts explicit TransferOptions instead of relying on package globals.
+//
+// Lock acquisition is deferred until after a pre-flight diff confirms there
+// is actual work to do. If all files are already in sync, the function returns
+// without ever acquiring the distributed lock or committing a new index version.
+func RunCopy(ctx context.Context, source, targetRaw string, opts *models.TransferOptions) error {
 	// 1. Load config
 	cfg, err := config.Load()
 	if err != nil {
@@ -40,7 +55,7 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 	// 3. API Connectivity Check
 	logger.Step("=> Initializing API Client...")
 	client := telegram.NewClient(cfg.ActiveToken, cfg.CustomAPIHost)
-	me, err := client.GetMe()
+	me, err := client.GetMeCtx(ctx)
 	if err != nil {
 		return fmt.Errorf("API connectivity failed: %v", err)
 	}
@@ -56,132 +71,325 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 		}
 	}
 
-	// 5. Initialize Index & Engine
+	// 5. Initialize index manager (no lock yet)
 	mgr, err := index.NewManager(client, cfg.IndexChannelID)
 	if err != nil {
 		return err
-	}
-	engine := chunker.NewEngine(client, mediaMode)
-
-	logger.Step("=> Loading Virtual Index...")
-	idx, err := mgr.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load index: %v", err)
 	}
 
 	targetKey := target.ChatID
 	if target.ThreadID != "" {
 		targetKey += ":" + target.ThreadID
 	}
-	if idx.Targets[targetKey] == nil {
-		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
-	}
 
-	// Validate source
+	// Validate source exists
 	info, err := os.Stat(source)
 	if err != nil {
 		return fmt.Errorf("source error: %v", err)
 	}
 
-	if zipMode {
-		vPath := fmt.Sprintf("%s/%s.zip", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
-		vPath = strings.TrimLeft(vPath, "/")
-		
-		logger.Step("=> Archiving '%s' on-the-fly to %s", source, vPath)
-		logger.Info("   [Uploading] %s (Streaming Archive)...", vPath)
+	engine := chunker.NewEngineWithSize(client, opts.MediaMode, opts.ChunkSize)
 
-		r, err := chunker.StreamZip(source)
-		if err != nil {
-			return fmt.Errorf("failed to initialize zip stream: %v", err)
+	// ── Archive mode (--zip or --tgz) ────────────────────────────────────────
+	// Archives are always a new upload — no pre-flight diff needed. Acquire the
+	// lock immediately and proceed.
+	if opts.ZipMode || opts.TgzMode {
+		archiveExt := ".zip"
+		archiveLabel := "zip"
+		if opts.TgzMode {
+			archiveExt = ".tar.gz"
+			archiveLabel = "tar.gz"
 		}
 
-		chunks, err := engine.ProcessStream(target.ChatID, target.ThreadID, filepath.Base(vPath), r, nil)
+		vPath := fmt.Sprintf("%s/%s%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source), archiveExt)
+		vPath = strings.TrimLeft(vPath, "/")
+
+		if opts.DryRun {
+			logger.Info("=> [DRY RUN] Would archive '%s' as %s to %s", source, archiveLabel, vPath)
+			return nil
+		}
+
+		// Acquire lock for the write path
+		if err := mgr.AcquireLock("", "copy"); err != nil {
+			return fmt.Errorf("failed to acquire lock: %v", err)
+		}
+		defer mgr.ReleaseLock()
+
+		logger.Step("=> Loading Virtual Index...")
+		idx, err := mgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load index: %v", err)
+		}
+		if idx.Targets[targetKey] == nil {
+			idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+		}
+
+		logger.Step("=> Archiving '%s' on-the-fly (%s) to %s", source, archiveLabel, vPath)
+		logger.Info("   [Uploading] %s (Streaming Archive)...", vPath)
+
+		var r interface {
+			Read(p []byte) (n int, err error)
+		}
+		if opts.TgzMode {
+			r, err = chunker.StreamTgz(source)
+		} else {
+			r, err = chunker.StreamZip(source)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to initialize %s stream: %v", archiveLabel, err)
+		}
+
+		chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(vPath), r, opts.Password)
 		if err != nil {
 			return fmt.Errorf("upload failed: %v", err)
 		}
 
-		// Calculate simulated size and time from directory
-		idx.Targets[targetKey][vPath] = &models.FileEntry{
-			Size:    0, // Stream size isn't known until EOF, handled by chunks size sum
-			ModTime: info.ModTime().Unix(),
-			Chunks:  chunks,
-		}
-		
-		// Update size to sum of chunks
 		var totalSize int64
 		for _, c := range chunks {
 			totalSize += c.Size
 		}
-		idx.Targets[targetKey][vPath].Size = totalSize
-
+		idx.Targets[targetKey][vPath] = &models.FileEntry{
+			Size:    totalSize,
+			ModTime: info.ModTime().Unix(),
+			Chunks:  chunks,
+		}
 		idx.Version++
 		logger.Success("      Success! %d chunks uploaded (%d bytes)", len(chunks), totalSize)
-	} else {
-		var filesToUpload []string
-		
-		if info.IsDir() {
-			filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
-				if err == nil && !info.IsDir() {
-					filesToUpload = append(filesToUpload, path)
-				}
-				return nil
-			})
-		} else {
-			filesToUpload = append(filesToUpload, source)
+
+		logger.Step("=> Committing new index to Telegram...")
+		if err := mgr.PushVersion(idx); err != nil {
+			return fmt.Errorf("failed to push index: %v", err)
 		}
+		logger.Success("=> Copy operation completed successfully.")
+		return nil
+	}
 
-		logger.Step("=> Found %d files to sync", len(filesToUpload))
+	// ── Regular file copy ─────────────────────────────────────────────────────
+	// Phase 1: pre-flight diff (no lock).
+	// Load the index read-only to check which files need uploading. If nothing
+	// has changed we return immediately — no lock acquired, no index committed.
 
-		var uploaded, skipped, errors int
-		for i, localPath := range filesToUpload {
-			relPath := filepath.Base(localPath)
-			if info.IsDir() {
-				rel, _ := filepath.Rel(source, localPath)
-				relPath = rel
+	logger.Step("=> Loading Virtual Index...")
+	idx, err := mgr.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load index: %v", err)
+	}
+	if idx.Targets[targetKey] == nil {
+		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+	}
+
+	// Collect all source files
+	var allFiles []copyFileTask
+	if info.IsDir() {
+		filepath.Walk(source, func(path string, fi os.FileInfo, err error) error {
+			if err == nil && !fi.IsDir() {
+				rel, _ := filepath.Rel(source, path)
+				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
+				vPath = strings.TrimLeft(vPath, "/")
+				allFiles = append(allFiles, copyFileTask{localPath: path, virtualPath: vPath, fileInfo: fi})
 			}
+			return nil
+		})
+	} else {
+		vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
+		vPath = strings.TrimLeft(vPath, "/")
+		allFiles = append(allFiles, copyFileTask{localPath: source, virtualPath: vPath, fileInfo: info})
+	}
 
-			vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), strings.ReplaceAll(relPath, "\\", "/"))
-			vPath = strings.TrimLeft(vPath, "/")
+	logger.Step("=> Found %d files to sync", len(allFiles))
 
-			fileInfo, _ := os.Stat(localPath)
-			if !force {
-				if existing, ok := idx.Targets[targetKey][vPath]; ok {
-					if existing.Size == fileInfo.Size() && existing.ModTime == fileInfo.ModTime().Unix() {
-						logger.Debug("   [Skipped] %s (Unchanged)", vPath)
-						skipped++
+	// Dry-run: show what would be uploaded and exit (no lock needed)
+	if opts.DryRun {
+		// Count what actually needs uploading for an accurate dry-run
+		var wouldUpload []copyFileTask
+		for _, t := range allFiles {
+			if !opts.Force {
+				if existing, ok := idx.Targets[targetKey][t.virtualPath]; ok {
+					if existing.Size == t.fileInfo.Size() && existing.ModTime == t.fileInfo.ModTime().Unix() {
 						continue
 					}
 				}
 			}
-
-			logger.Info("[%d/%d] %s (%d bytes)", i+1, len(filesToUpload), vPath, fileInfo.Size())
-
-			f, err := os.Open(localPath)
-			if err != nil {
-				logger.Error("      Error: %v", err)
-				errors++
-				continue
-			}
-
-			chunks, err := engine.ProcessStream(target.ChatID, target.ThreadID, filepath.Base(vPath), f, nil)
-			f.Close()
-			if err != nil {
-				logger.Error("      Upload Failed: %v", err)
-				errors++
-				continue
-			}
-
-			idx.Targets[targetKey][vPath] = &models.FileEntry{
-				Size:    fileInfo.Size(),
-				ModTime: fileInfo.ModTime().Unix(),
-				Chunks:  chunks,
-			}
-			idx.Version++
-			uploaded++
-			logger.Debug("      Success! %d chunks uploaded", len(chunks))
+			wouldUpload = append(wouldUpload, t)
 		}
-		logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors", uploaded, skipped, errors)
+		if len(wouldUpload) == 0 {
+			logger.Success("=> [DRY RUN] Nothing to upload — all %d files already in sync.", len(allFiles))
+			return nil
+		}
+		logger.Info("=> [DRY RUN] Would upload %d files:", len(wouldUpload))
+		for _, t := range wouldUpload {
+			logger.Info("   %s (%d bytes)", t.virtualPath, t.fileInfo.Size())
+		}
+		return nil
 	}
+
+	// Pre-flight diff: parallel checker pool against the (unlocked) index snapshot
+	preChan := make(chan copyFileTask, len(allFiles))
+	preDoneChan := make(chan copyFileTask, len(allFiles))
+	var preSkipped atomic.Int32
+
+	var wgPre sync.WaitGroup
+	for i := 0; i < opts.Checkers; i++ {
+		wgPre.Add(1)
+		go func() {
+			defer wgPre.Done()
+			for task := range preChan {
+				if !opts.Force {
+					if existing, ok := idx.Targets[targetKey][task.virtualPath]; ok {
+						if existing.Size == task.fileInfo.Size() && existing.ModTime == task.fileInfo.ModTime().Unix() {
+							preSkipped.Add(1)
+							logger.Debug("   [Skipped] %s (Unchanged)", task.virtualPath)
+							continue
+						}
+					}
+				}
+				preDoneChan <- task
+			}
+		}()
+	}
+	for _, t := range allFiles {
+		preChan <- t
+	}
+	close(preChan)
+	wgPre.Wait()
+	close(preDoneChan)
+
+	var needsUpload []copyFileTask
+	for t := range preDoneChan {
+		needsUpload = append(needsUpload, t)
+	}
+
+	// ── Early exit: nothing to do ─────────────────────────────────────────────
+	if len(needsUpload) == 0 {
+		logger.Success("=> Already in sync. Nothing to do (Skipped %d files).", preSkipped.Load())
+		return nil // No lock acquired, no index version committed.
+	}
+
+	// ── Actual work: acquire lock, reload index, re-diff, upload ─────────────
+	// We reload the index under the lock so that any concurrent uploads from
+	// another instance are respected (TOCTOU safety).
+	if err := mgr.AcquireLock("", "copy"); err != nil {
+		return fmt.Errorf("failed to acquire lock: %v", err)
+	}
+	defer mgr.ReleaseLock()
+
+	// Reload index under lock to pick up any changes since our pre-flight read
+	idx, err = mgr.Load()
+	if err != nil {
+		return fmt.Errorf("failed to reload index under lock: %v", err)
+	}
+	if idx.Targets[targetKey] == nil {
+		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+	}
+
+	// Re-diff: filter the pre-flight upload list against the freshly-loaded index
+	tasksChan := make(chan copyFileTask, len(needsUpload))
+	uploadChan := make(chan copyFileTask, len(needsUpload))
+	var reSkipped atomic.Int32
+
+	var wgCheck sync.WaitGroup
+	for i := 0; i < opts.Checkers; i++ {
+		wgCheck.Add(1)
+		go func() {
+			defer wgCheck.Done()
+			for task := range tasksChan {
+				if !opts.Force {
+					if existing, ok := idx.Targets[targetKey][task.virtualPath]; ok {
+						if existing.Size == task.fileInfo.Size() && existing.ModTime == task.fileInfo.ModTime().Unix() {
+							reSkipped.Add(1)
+							logger.Debug("   [Skipped] %s (Unchanged — updated by concurrent upload)", task.virtualPath)
+							continue
+						}
+					}
+				}
+				uploadChan <- task
+			}
+		}()
+	}
+	for _, t := range needsUpload {
+		tasksChan <- t
+	}
+	close(tasksChan)
+	wgCheck.Wait()
+	close(uploadChan)
+
+	var uploadList []copyFileTask
+	for t := range uploadChan {
+		uploadList = append(uploadList, t)
+	}
+
+	totalSkipped := preSkipped.Load() + reSkipped.Load()
+
+	if len(uploadList) == 0 {
+		// Concurrent upload beat us to it — nothing left to do under the lock either
+		logger.Success("=> Already in sync. Nothing to do (Skipped %d files).", totalSkipped)
+		return nil
+	}
+
+	// Transfer pipeline — parallel uploads
+	logger.Step("=> Enqueueing %d files for transfer (Workers: %d)...", len(uploadList), opts.Transfers)
+
+	transferChan := make(chan copyFileTask, len(uploadList))
+	var wgTransfer sync.WaitGroup
+	var idxMutex sync.Mutex
+	var uploaded atomic.Int32
+	var uploadErrors atomic.Int32
+	totalToUpload := int32(len(uploadList))
+
+	for i := 0; i < opts.Transfers; i++ {
+		wgTransfer.Add(1)
+		go func() {
+			defer wgTransfer.Done()
+			for task := range transferChan {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				current := uploaded.Add(1)
+				logger.Info("[%d/%d] %s (%d bytes)", current, totalToUpload, task.virtualPath, task.fileInfo.Size())
+
+				f, err := os.Open(task.localPath)
+				if err != nil {
+					logger.Error("      Error: %v", err)
+					uploadErrors.Add(1)
+					continue
+				}
+
+				chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.virtualPath), f, opts.Password)
+				f.Close()
+				if err != nil {
+					logger.Error("      Upload Failed: %v", err)
+					uploadErrors.Add(1)
+					continue
+				}
+
+				idxMutex.Lock()
+				idx.Targets[targetKey][task.virtualPath] = &models.FileEntry{
+					Size:    task.fileInfo.Size(),
+					ModTime: task.fileInfo.ModTime().Unix(),
+					Chunks:  chunks,
+				}
+				idx.Version++
+				idxMutex.Unlock()
+				logger.Debug("      Success! %d chunks uploaded", len(chunks))
+			}
+		}()
+	}
+
+	for _, t := range uploadList {
+		transferChan <- t
+	}
+	close(transferChan)
+	wgTransfer.Wait()
+
+	if ctx.Err() != nil {
+		logger.Warn("=> Copy interrupted. Saving partial progress...")
+	}
+
+	successCount := uploaded.Load() - uploadErrors.Load()
+	logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors", successCount, totalSkipped, uploadErrors.Load())
 
 	logger.Step("=> Committing new index to Telegram...")
 	if err := mgr.PushVersion(idx); err != nil {

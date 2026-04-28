@@ -2,6 +2,7 @@ package chunker
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -13,8 +14,10 @@ import (
 	"strings"
 
 	"github.com/dhowden/tag"
+	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/telegram"
+	"golang.org/x/crypto/scrypt"
 )
 
 // Engine handles breaking files into streams and pushing to Telegram.
@@ -33,15 +36,41 @@ func NewEngine(client *telegram.Client, mediaMode bool) *Engine {
 	}
 }
 
+// NewEngineWithSize creates a chunking engine with an explicit chunk size.
+func NewEngineWithSize(client *telegram.Client, mediaMode bool, chunkSize int64) *Engine {
+	if chunkSize <= 0 {
+		chunkSize = 49 * 1024 * 1024
+	}
+	return &Engine{
+		client:    client,
+		ChunkSize: chunkSize,
+		MediaMode: mediaMode,
+	}
+}
+
 // ProcessStream chunks an io.Reader and uploads parts to telegram
 // returning the list of ChunkEntries to store in the Index.
 func (e *Engine) ProcessStream(chatID, threadID, filename string, r io.Reader, password []byte) ([]*models.ChunkEntry, error) {
+	return e.ProcessStreamCtx(context.Background(), chatID, threadID, filename, r, password)
+}
+
+// ProcessStreamCtx chunks an io.Reader and uploads parts to telegram with context support.
+// Returns the list of ChunkEntries to store in the Index.
+// Respects context cancellation between chunk uploads for graceful shutdown.
+func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filename string, r io.Reader, password []byte) ([]*models.ChunkEntry, error) {
 	var chunks []*models.ChunkEntry
 	var offset int64
 
 	buf := make([]byte, e.ChunkSize)
 
 	for {
+		// Check for cancellation before reading the next chunk
+		select {
+		case <-ctx.Done():
+			return chunks, fmt.Errorf("upload cancelled: %w", ctx.Err())
+		default:
+		}
+
 		n, err := io.ReadFull(r, buf)
 		if n > 0 {
 			chunkData := buf[:n]
@@ -64,7 +93,7 @@ func (e *Engine) ProcessStream(chatID, threadID, filename string, r io.Reader, p
 			var upErr error
 
 			isEOF := (err == io.EOF || err == io.ErrUnexpectedEOF)
-			
+
 			var chunkName string
 			if len(chunks) == 0 && isEOF {
 				chunkName = filename
@@ -73,11 +102,11 @@ func (e *Engine) ProcessStream(chatID, threadID, filename string, r io.Reader, p
 			}
 
 			if e.MediaMode && len(chunks) == 0 && isEOF && !isEncrypted {
-				// Eligible for Media API
+				// Eligible for Media API — single-chunk, unencrypted, media mode on
 				ext := strings.ToLower(filepath.Ext(filename))
 				method := "sendDocument"
 				fieldName := "document"
-				
+
 				switch ext {
 				case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp":
 					method = "sendPhoto"
@@ -93,7 +122,7 @@ func (e *Engine) ProcessStream(chatID, threadID, filename string, r io.Reader, p
 				if method != "sendDocument" {
 					var params map[string]string
 					var thumbData []byte
-					
+
 					if method == "sendAudio" {
 						params = make(map[string]string)
 						m, tErr := tag.ReadFrom(bytes.NewReader(chunkData))
@@ -113,24 +142,42 @@ func (e *Engine) ProcessStream(chatID, threadID, filename string, r io.Reader, p
 							}
 						}
 
-						// If we found basically zero metadata, it's not worth breaking the audio UI.
-						// Revert back to document!
+						// No metadata found — fall back to sendDocument to avoid empty audio UI
 						if len(params) == 0 {
+							logger.Debug("      [Media] %s → sendDocument (no ID3 tags found, falling back)", filename)
 							method = "sendDocument"
 							fieldName = "document"
+						} else {
+							logger.Debug("      [Media] %s → sendAudio (title=%q performer=%q thumb=%v)",
+								filename, params["title"], params["performer"], thumbData != nil)
 						}
 					}
-					
+
 					if method != "sendDocument" {
-						fileID, msgID, upErr = e.client.SendMedia(chatID, threadID, chunkName, chunkReader, method, fieldName, params, thumbData)
+						if method == "sendPhoto" {
+							logger.Debug("      [Media] %s → sendPhoto", filename)
+						} else if method == "sendVideo" {
+							logger.Debug("      [Media] %s → sendVideo", filename)
+						}
+						fileID, msgID, upErr = e.client.SendMediaCtx(ctx, chatID, threadID, chunkName, chunkReader, method, fieldName, params, thumbData)
 					} else {
-						fileID, msgID, upErr = e.client.SendDocument(chatID, threadID, chunkName, chunkReader)
+						fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader)
 					}
 				} else {
-					fileID, msgID, upErr = e.client.SendDocument(chatID, threadID, chunkName, chunkReader)
+					// Extension not in any media category
+					logger.Debug("      [Media] %s → sendDocument (unsupported extension for media routing)", filename)
+					fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader)
 				}
 			} else {
-				fileID, msgID, upErr = e.client.SendDocument(chatID, threadID, chunkName, chunkReader)
+				// Not eligible for media endpoint
+				if e.MediaMode {
+					if isEncrypted {
+						logger.Debug("      [Media] %s → sendDocument (encrypted — media endpoints require plaintext)", filename)
+					} else if !isEOF {
+						logger.Debug("      [Media] %s → sendDocument (multi-part chunk — too large for media endpoint)", filename)
+					}
+				}
+				fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader)
 			}
 
 			if upErr != nil {
@@ -172,6 +219,12 @@ func HashChunk(data []byte) string {
 // Chunks are explicitly sorted by offset before reassembly.
 // A hash mismatch aborts immediately with a non-nil error.
 func (e *Engine) ReassembleStream(chunks []*models.ChunkEntry, dst io.Writer, password []byte) error {
+	return e.ReassembleStreamCtx(context.Background(), chunks, dst, password)
+}
+
+// ReassembleStreamCtx downloads chunks from Telegram and writes them sequentially to dst
+// with context support for graceful cancellation.
+func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.ChunkEntry, dst io.Writer, password []byte) error {
 	if len(chunks) == 0 {
 		return fmt.Errorf("no chunks to reassemble")
 	}
@@ -184,14 +237,23 @@ func (e *Engine) ReassembleStream(chunks []*models.ChunkEntry, dst io.Writer, pa
 	})
 
 	for i, chunk := range sorted {
+		// Check for cancellation between chunks
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("download cancelled: %w", ctx.Err())
+		default:
+		}
+
 		// 2. Resolve Telegram file path from file_id
-		filePath, err := e.client.GetFile(chunk.TGFileID)
+		filePath, err := e.client.GetFileCtx(ctx, chunk.TGFileID)
 		if err != nil {
 			return fmt.Errorf("chunk %d/%d: failed to resolve file_id %s: %v", i+1, len(sorted), chunk.TGFileID, err)
 		}
 
+		logger.Debug("      [Chunk %d/%d] file_path resolved: %s", i+1, len(sorted), filePath)
+
 		// 3. Download the raw chunk stream
-		stream, err := e.client.DownloadFileStream(filePath)
+		stream, err := e.client.DownloadFileStreamCtx(ctx, filePath)
 		if err != nil {
 			return fmt.Errorf("chunk %d/%d: download failed: %v", i+1, len(sorted), err)
 		}
@@ -211,6 +273,8 @@ func (e *Engine) ReassembleStream(chunks []*models.ChunkEntry, dst io.Writer, pa
 		if computedHash != chunk.Hash {
 			return fmt.Errorf("chunk %d/%d: HASH MISMATCH (expected %s, got %s) — aborting download to prevent data corruption", i+1, len(sorted), chunk.Hash, computedHash)
 		}
+
+		logger.Debug("      [Chunk %d/%d] Hash verified ✓", i+1, len(sorted))
 
 		// 5. Decrypt if the chunk was encrypted during upload
 		if chunk.Encrypted {
@@ -233,13 +297,32 @@ func (e *Engine) ReassembleStream(chunks []*models.ChunkEntry, dst io.Writer, pa
 	return nil
 }
 
-// encryptAES encrypts data using AES-GCM
-func encryptAES(plaintext []byte, key []byte) ([]byte, error) {
-	// Pad key to 32 bytes for AES-256
-	paddedKey := make([]byte, 32)
-	copy(paddedKey, key)
+// DeriveKey uses scrypt to derive a 32-byte AES-256 key from a passphrase.
+// The salt is deterministic (derived from the passphrase itself via SHA-256)
+// so the same passphrase always produces the same key without needing to store salt.
+// This is a deliberate trade-off: we lose per-file salt uniqueness but gain the ability
+// to decrypt without any additional metadata beyond the passphrase.
+func DeriveKey(passphrase []byte) ([]byte, error) {
+	// Use SHA-256 of the passphrase as a deterministic salt
+	saltHash := sha256.Sum256(passphrase)
+	salt := saltHash[:16]
 
-	block, err := aes.NewCipher(paddedKey)
+	// scrypt params: N=32768, r=8, p=1, keyLen=32 (AES-256)
+	key, err := scrypt.Key(passphrase, salt, 32768, 8, 1, 32)
+	if err != nil {
+		return nil, fmt.Errorf("key derivation failed: %v", err)
+	}
+	return key, nil
+}
+
+// encryptAES encrypts data using AES-256-GCM with a key derived from the passphrase.
+func encryptAES(plaintext []byte, passphrase []byte) ([]byte, error) {
+	key, err := DeriveKey(passphrase)
+	if err != nil {
+		return nil, err
+	}
+
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
@@ -259,11 +342,13 @@ func encryptAES(plaintext []byte, key []byte) ([]byte, error) {
 
 // decryptAES decrypts data that was encrypted with encryptAES (AES-256-GCM).
 // The nonce is prepended to the ciphertext by the encrypt function.
-func decryptAES(ciphertext []byte, key []byte) ([]byte, error) {
-	paddedKey := make([]byte, 32)
-	copy(paddedKey, key)
+func decryptAES(ciphertext []byte, passphrase []byte) ([]byte, error) {
+	key, err := DeriveKey(passphrase)
+	if err != nil {
+		return nil, err
+	}
 
-	block, err := aes.NewCipher(paddedKey)
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}

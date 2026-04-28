@@ -161,6 +161,19 @@ func setupGlobal(cfg *models.Config) error {
 	}
 	cfg.IndexChannelID = parseChatID(answers.Channel, "channel")
 	cfg.CustomAPIHost = strings.TrimSpace(answers.API)
+
+	// If using a custom API host (local Bot API), ask for optional file server
+	if cfg.CustomAPIHost != "" && cfg.CustomAPIHost != "https://api.telegram.org" {
+		var fileServer string
+		prompt := &survey.Input{
+			Message: "File Server Host for downloads (e.g. http://192.168.0.7:9000, blank to skip):",
+			Default: cfg.FileServerHost,
+			Help:    "If your local Bot API stores files on disk and you serve them via nginx/caddy, enter that URL here. Downloads will fetch files from this server instead of the Bot API's /file/ endpoint.",
+		}
+		survey.AskOne(prompt, &fileServer)
+		cfg.FileServerHost = strings.TrimSpace(fileServer)
+	}
+
 	return Save(cfg)
 }
 

@@ -15,19 +15,22 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
    - [Single Files](#single-files)
    - [Whole Directories](#whole-directories)
    - [Encrypted Uploads](#encrypted-uploads)
-   - [Archive Mode (Streaming ZIP)](#archive-mode-streaming-zip)
+   - [Archive Mode (Streaming ZIP / TGZ)](#archive-mode-streaming-zip--tgz)
    - [Media Mode (Spotify-Style)](#media-mode-spotify-style)
+   - [Dry Run (Preview Changes)](#dry-run-preview-changes)
 5. [Syncing Files (`sync`)](#5-syncing-files-sync)
-6. [Downloading Files (`download`)](#6-downloading-files-download)
+6. [Moving Files (`move`)](#6-moving-files-move)
+7. [Downloading Files (`download`)](#7-downloading-files-download)
    - [Single Files](#single-file-download)
    - [Whole Directories](#directory-download)
    - [Encrypted Downloads](#encrypted-downloads)
-7. [Best Performance & Multi-Threading](#7-best-performance--multi-threading)
+   - [Password Priority](#password-priority)
+8. [Best Performance & Multi-Threading](#8-best-performance--multi-threading)
    - [Tuning for a Local Bot API Server](#tuning-for-a-local-bot-api-server)
    - [Tuning for Telegram's Cloud API](#tuning-for-telegrams-cloud-api)
-8. [Output Control](#8-output-control)
-9. [Common Scenario Recipes](#9-common-scenario-recipes)
-10. [Flag Reference Table](#10-flag-reference-table)
+9. [Output Control](#9-output-control)
+10. [Common Scenario Recipes](#10-common-scenario-recipes)
+11. [Flag Reference Table](#11-flag-reference-table)
 
 ---
 
@@ -125,34 +128,37 @@ teleman copy ./my-project/ nas:dev/my-project/
 
 ### Encrypted Uploads
 
-All chunks are AES-256-GCM encrypted on your CPU **before** hitting the network. You need to provide the same key when downloading.
+All chunks are AES-256-GCM encrypted on your CPU **before** hitting the network. Keys are derived from your passphrase using **scrypt** (memory-hard KDF). You need the same passphrase when downloading.
 
 ```bash
-# Encrypt a single file
-teleman copy ./passwords.kdbx secure_vault: --encrypt
+# Encrypt using environment variable (recommended)
+TELEMAN_PASSWORD=mysecret teleman copy ./passwords.kdbx secure_vault: --encrypt
 
-# Encrypt an entire directory
+# Encrypt using interactive prompt (if no env var set, you'll be asked)
 teleman copy ./PrivateDocuments/ secure_vault:private/ --encrypt
 
 # Encrypt with max threads (see Performance section)
 teleman copy ./SensitiveData/ vault:backup/ --encrypt -t 8 -c 16
 ```
 
-> ⚠️ **Important:** Encryption key management is handled externally. Keep your key safe — lost keys mean unrecoverable data.
+> ⚠️ **Important:** Lost passphrases mean unrecoverable data. There is no master key. See [security.md](./security.md) for full details.
 
-### Archive Mode (Streaming ZIP)
+### Archive Mode (Streaming ZIP / TGZ)
 
-Collapses an entire directory into a single streaming `.zip` without writing anything to disk first. Great for project snapshots.
+Collapses an entire directory into a single streaming `.zip` or `.tar.gz` without writing anything to disk first. Great for project snapshots.
 
 ```bash
 # Archive a whole project folder into one .zip chunk stream
 teleman copy ./my-website/ backup:snapshots/ --zip
 
+# Archive as .tar.gz instead
+teleman copy ./my-website/ backup:snapshots/ --tgz
+
 # Archive and encrypt in one pass
 teleman copy ./DatabaseDump/ remote:backups/ --zip --encrypt
 
 # Archive a Node.js project (avoids uploading node_modules individually)
-teleman copy ./node-app/ nas:apps/ --zip
+teleman copy ./node-app/ nas:apps/ --tgz
 ```
 
 ### Media Mode (Spotify-Style)
@@ -168,6 +174,24 @@ teleman copy ./Music/DaftPunk-RAM/ music_backup:albums/ --media
 
 # Upload video files with native Telegram video player support
 teleman copy ./Videos/Clips/ channel:videos/ --media
+```
+
+### Dry Run (Preview Changes)
+
+Use `--dry-run` to see exactly what would be uploaded without making any changes. Works with `copy`, `sync`, `move`, and `download`.
+
+```bash
+# Preview what copy would upload
+teleman copy ./Documents/ backup:docs/ --dry-run
+
+# Preview a sync operation
+teleman sync ./Projects/ nas:dev/ --dry-run -v
+
+# Preview a move before committing
+teleman move ./Temp/ remote:archive/ --dry-run
+
+# Preview a download
+teleman download backup:photos/ ./restored/ --dry-run
 ```
 
 ---
@@ -194,7 +218,29 @@ teleman sync ./WebProject/ remote:snapshots/ --zip
 
 ---
 
-## 6. Downloading Files (`download`)
+## 6. Moving Files (`move`)
+
+`move` is identical to `copy`, but **deletes the source files** from your local disk after the index has been successfully committed to Telegram. Source files are only removed after Telegram confirms storage — never before.
+
+```bash
+# Move a confidential vault to Telegram and delete the local copy
+teleman move ./ConfidentialVault/ remote:
+
+# Move with encryption — local files deleted only after encrypted upload + index commit
+teleman move ./SensitiveRecords/ vault:records/ --encrypt
+
+# Move a large folder with parallel workers
+teleman move ./OldProjects/ archive:legacy/ -t 8 -c 16
+
+# Preview what would be moved before committing
+teleman move ./Temp/ remote:archive/ --dry-run
+```
+
+> **Safety Guarantee:** If the upload or index commit fails for any reason (network error, Telegram outage, Ctrl+C), source files are **preserved**. Teleman will never delete source files without confirmed remote storage.
+
+---
+
+## 7. Downloading Files (`download`)
 
 `download` is the inverse of `copy`. It fetches chunks from Telegram, verifies each chunk's SHA-256 hash, optionally decrypts, and writes to disk atomically.
 
@@ -227,18 +273,30 @@ teleman download nas: ./full_nas_restore/
 ### Encrypted Downloads
 
 ```bash
-# Download and decrypt a previously encrypted file
-teleman download secure_vault:passwords.kdbx ./restored/ --password "my-secret-key"
+# Recommended: use environment variable (hidden from process list)
+TELEMAN_PASSWORD=mysecret teleman download vault:private/ ./decrypted/
 
-# Download and decrypt an entire encrypted directory
-teleman download vault:private/ ./decrypted_output/ --password "my-secret-key"
+# Interactive prompt (if no env var set)
+teleman download vault:private/ ./decrypted/
+
+# CLI flag (visible in process list — use only for testing)
+teleman download secure_vault:passwords.kdbx ./restored/ --password "my-secret-key"
 ```
 
 > **Note:** Chunk hash verification happens **before** decryption. If a chunk is corrupted in transit, the download aborts immediately — no partial, corrupted files are ever written to the final path.
 
+### Password Priority
+
+When decrypting, Teleman resolves the password in this order:
+1. `TELEMAN_PASSWORD` environment variable (recommended)
+2. Interactive terminal prompt (automatic if stdin is a TTY)
+3. `--password` CLI flag (last resort — visible in `ps aux`)
+
+See [security.md](./security.md) for full encryption architecture details.
+
 ---
 
-## 7. Best Performance & Multi-Threading
+## 8. Best Performance & Multi-Threading
 
 Teleman exposes two concurrency pools you can tune:
 
@@ -295,7 +353,7 @@ teleman sync ./TestData/ remote:test/ --encrypt -t 8 -c 16 -v
 
 ---
 
-## 8. Output Control
+## 9. Output Control
 
 ```bash
 # Verbose mode: shows every pipeline step, index decisions, chunk hashes
@@ -313,7 +371,7 @@ teleman sync /home/user/Documents backup:docs/ -t 4 -c 8 -q
 
 ---
 
-## 9. Common Scenario Recipes
+## 10. Common Scenario Recipes
 
 ### Scenario: Nightly automated backup (cron job)
 ```bash
@@ -366,7 +424,7 @@ teleman download backup:projects/my-app/ ./restored/
 
 ---
 
-## 10. Flag Reference Table
+## 11. Flag Reference Table
 
 ### Transfer Flags (`copy`, `sync`, `move`)
 
@@ -374,17 +432,21 @@ teleman download backup:projects/my-app/ ./restored/
 |---|---|---|---|
 | `--transfers` | `-t` | `4` | Number of parallel file upload workers |
 | `--checkers` | `-c` | `8` | Number of parallel index diff/checker workers |
-| `--cz` | — | `49M` | Chunk size (e.g. `49M` for Cloud API, `1000M` for Local API) |
-| `--encrypt` | `-e` | `false` | AES-256-GCM encrypt all chunks before upload |
+| `--cz` | — | `49M` | Chunk size (e.g. `49M`, `1G`, `512K`) |
+| `--encrypt` | `-e` | `false` | AES-256-GCM encrypt all chunks before upload (requires password) |
 | `--zip` | — | `false` | Stream source directory as a `.zip` archive |
+| `--tgz` | — | `false` | Stream source directory as a `.tar.gz` archive |
 | `--media` | — | `false` | Route audio/video/image via Telegram's native media APIs |
 | `--force` | `-f` | `false` | Skip index diff — re-upload everything unconditionally |
+| `--dry-run` | — | `false` | Preview what would be transferred without making changes |
+| `--password` | — | `""` | Encryption password (prefer `TELEMAN_PASSWORD` env var) |
 
 ### Download Flags (`download`)
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--password` | — | `""` | Decryption password for encrypted chunks |
+| `--password` | — | `""` | Decryption password (prefer `TELEMAN_PASSWORD` env var) |
+| `--dry-run` | — | `false` | Preview what would be downloaded without making changes |
 
 ### Global Flags (all commands)
 
@@ -392,6 +454,12 @@ teleman download backup:projects/my-app/ ./restored/
 |---|---|---|---|
 | `--verbose` | `-v` | `false` | Print every internal pipeline step and chunk decision |
 | `--quiet` | `-q` | `false` | Suppress all output — only fatal errors reach stderr |
+
+### Environment Variables
+
+| Variable | Description |
+|---|---|
+| `TELEMAN_PASSWORD` | Encryption/decryption password (recommended over `--password` flag) |
 
 ---
 

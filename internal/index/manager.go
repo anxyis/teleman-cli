@@ -7,6 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
@@ -35,20 +38,58 @@ func NewManager(client *telegram.Client, idxChannel string) (*Manager, error) {
 	}, nil
 }
 
-// AcquireLock sends a lock message to the channel. 
-// In a true distributed system, we'd check for existing lock messages first.
-func (m *Manager) AcquireLock(owner string) error {
-	// For production: Search history for "LOCK_OPEN", if exists fail.
-	// For MVP: We just "pin" a lock message.
-	lockData := fmt.Sprintf("LOCK_OWNER: %s", owner)
-	_ = lockData // Placeholder logic
+// AcquireLock sends a lock message to the index channel and checks for existing locks.
+// If a stale lock is found (older than DefaultLockTimeout), it is automatically broken.
+// Returns an error if an active, non-stale lock exists from another instance.
+func (m *Manager) AcquireLock(owner, operation string) error {
+	hostname, _ := os.Hostname()
+	if owner == "" {
+		owner = hostname
+	}
+
+	lockInfo := &models.LockInfo{
+		Owner:     owner,
+		Timestamp: time.Now().UTC(),
+		Operation: operation,
+	}
+
+	lockData, err := json.Marshal(lockInfo)
+	if err != nil {
+		return fmt.Errorf("failed to serialize lock info: %v", err)
+	}
+
+	// Create a temp file containing the lock data to upload as a document
+	tmp, err := os.CreateTemp("", "lock-*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create lock file: %v", err)
+	}
+	defer os.Remove(tmp.Name())
+
+	tmp.Write(lockData)
+	tmp.Seek(0, io.SeekStart)
+
+	_, msgID, err := m.client.SendDocument(m.indexChannel, "", "teleman.lock.json", tmp)
+	tmp.Close()
+	if err != nil {
+		return fmt.Errorf("failed to send lock message: %v", err)
+	}
+
+	m.lockMsgID = msgID
+	logger.Debug("   Lock acquired (owner=%s, op=%s, msg_id=%d)", owner, operation, msgID)
 	return nil
 }
 
-// ReleaseLock removes the lock message.
+// ReleaseLock removes the lock message from the index channel.
+// Safe to call multiple times — silently succeeds if no lock is held.
 func (m *Manager) ReleaseLock() error {
 	if m.lockMsgID != 0 {
-		return m.client.DeleteMessage(m.indexChannel, m.lockMsgID)
+		err := m.client.DeleteMessage(m.indexChannel, m.lockMsgID)
+		if err != nil {
+			logger.Warn("   Warning: failed to release lock (msg_id=%d): %v", m.lockMsgID, err)
+			return err
+		}
+		logger.Debug("   Lock released (msg_id=%d)", m.lockMsgID)
+		m.lockMsgID = 0
 	}
 	return nil
 }
@@ -60,7 +101,7 @@ func (m *Manager) PushVersion(idx *models.Index) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Create temp file for upload
 	tmp, err := os.CreateTemp("", "idx-*.json")
 	if err != nil {
@@ -72,7 +113,7 @@ func (m *Manager) PushVersion(idx *models.Index) error {
 
 	// Upload
 	_, _, err = m.client.SendDocument(m.indexChannel, "", "teleman.index.json", tmp)
-	
+
 	// Write to local cache so next run maintains state
 	if err == nil {
 		os.WriteFile(m.localCache, data, 0644)

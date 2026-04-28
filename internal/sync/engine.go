@@ -1,11 +1,13 @@
 package sync
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/config"
@@ -13,20 +15,15 @@ import (
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/telegram"
-	"sync/atomic"
 )
 
+// SyncEngine orchestrates parallel file diffing and upload transfers.
 type SyncEngine struct {
 	client     *telegram.Client
 	idxManager *index.Manager
 	chunker    *chunker.Engine
 	cfg        *models.Config
-
-	optTransfers int
-	optCheckers  int
-	optZipMode   bool
-	optMediaMode bool
-	optForce     bool
+	opts       *models.TransferOptions
 }
 
 type fileTask struct {
@@ -35,7 +32,8 @@ type fileTask struct {
 	FileInfo    os.FileInfo
 }
 
-func NewSyncEngine(transfers, checkers int, zipMode, mediaMode, force bool) (*SyncEngine, error) {
+// NewSyncEngine creates a sync engine using explicit TransferOptions instead of globals.
+func NewSyncEngine(opts *models.TransferOptions) (*SyncEngine, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %v", err)
@@ -49,19 +47,16 @@ func NewSyncEngine(transfers, checkers int, zipMode, mediaMode, force bool) (*Sy
 	}
 
 	return &SyncEngine{
-		client:       client,
-		idxManager:   idxManager,
-		chunker:      chunker.NewEngine(client, mediaMode),
-		cfg:          cfg,
-		optTransfers: transfers,
-		optCheckers:  checkers,
-		optZipMode:   zipMode,
-		optMediaMode: mediaMode,
-		optForce:     force,
+		client:     client,
+		idxManager: idxManager,
+		chunker:    chunker.NewEngineWithSize(client, opts.MediaMode, opts.ChunkSize),
+		cfg:        cfg,
+		opts:       opts,
 	}, nil
 }
 
-func (s *SyncEngine) Run(source, targetRaw string) error {
+// Run executes the sync operation with context support for graceful shutdown.
+func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 	parts := strings.SplitN(targetRaw, ":", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid target format. Use alias:virtual/path")
@@ -72,6 +67,12 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 	if !ok {
 		return fmt.Errorf("target alias '%s' not found", alias)
 	}
+
+	// Acquire distributed lock
+	if err := s.idxManager.AcquireLock("", "sync"); err != nil {
+		return fmt.Errorf("failed to acquire lock: %v", err)
+	}
+	defer s.idxManager.ReleaseLock()
 
 	idx, err := s.idxManager.Load()
 	if err != nil {
@@ -115,7 +116,7 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 		})
 	}
 
-	logger.Step("=> Diffing %d local files against virtual index (Checkers: %d)...", len(localFiles), s.optCheckers)
+	logger.Step("=> Diffing %d local files against virtual index (Checkers: %d)...", len(localFiles), s.opts.Checkers)
 
 	// 2. Diffing Pipeline (Checkers)
 	tasksChan := make(chan fileTask, len(localFiles))
@@ -124,13 +125,13 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 	var skipped atomic.Int32
 
 	var wgCheck sync.WaitGroup
-	for i := 0; i < s.optCheckers; i++ {
+	for i := 0; i < s.opts.Checkers; i++ {
 		wgCheck.Add(1)
 		go func() {
 			defer wgCheck.Done()
 			for task := range tasksChan {
 				needsUpload := true
-				if !s.optForce {
+				if !s.opts.Force {
 					if existing, ok := idx.Targets[targetKey][task.VirtualPath]; ok {
 						if existing.Size == task.FileInfo.Size() && existing.ModTime == task.FileInfo.ModTime().Unix() {
 							needsUpload = false
@@ -163,7 +164,16 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 		return nil
 	}
 
-	logger.Step("=> Enqueueing %d files for transfer (Workers: %d)...", len(uploadList), s.optTransfers)
+	// Dry-run mode: report what would be uploaded without mutating state
+	if s.opts.DryRun {
+		logger.Info("=> [DRY RUN] Would upload %d files:", len(uploadList))
+		for _, t := range uploadList {
+			logger.Info("   %s (%d bytes)", t.VirtualPath, t.FileInfo.Size())
+		}
+		return nil
+	}
+
+	logger.Step("=> Enqueueing %d files for transfer (Workers: %d)...", len(uploadList), s.opts.Transfers)
 
 	// 3. Upload Pipeline (Transfers)
 	transferChan := make(chan fileTask, len(uploadList))
@@ -174,11 +184,18 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 	var errors atomic.Int32
 	totalToUpload := int32(len(uploadList))
 
-	for i := 0; i < s.optTransfers; i++ {
+	for i := 0; i < s.opts.Transfers; i++ {
 		wgTransfer.Add(1)
 		go func() {
 			defer wgTransfer.Done()
 			for task := range transferChan {
+				// Check for cancellation
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
 				current := uploaded.Add(1)
 				logger.Info("[%d/%d] %s (%d bytes)", current, totalToUpload, task.VirtualPath, task.FileInfo.Size())
 
@@ -189,7 +206,7 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 					continue
 				}
 
-				chunks, err := s.chunker.ProcessStream(target.ChatID, target.ThreadID, filepath.Base(task.VirtualPath), f, nil)
+				chunks, err := s.chunker.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.VirtualPath), f, s.opts.Password)
 				f.Close()
 				if err != nil {
 					logger.Error("      [Error] Upload Failed for %s: %v", task.VirtualPath, err)
@@ -216,6 +233,11 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 	}
 	close(transferChan)
 	wgTransfer.Wait()
+
+	// Check if we were cancelled
+	if ctx.Err() != nil {
+		logger.Warn("=> Sync interrupted. Saving partial progress...")
+	}
 
 	logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors", uploaded.Load()-errors.Load(), skipped.Load(), errors.Load())
 

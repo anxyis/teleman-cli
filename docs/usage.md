@@ -67,9 +67,13 @@ teleman download encrypted_vault:secrets/ ./decrypted/ --password mysecret
 **Atomic Writes:** Files are written to a `.partial` temp file first, then atomically renamed on success. This ensures no half-written files exist in the output directory.
 
 ### Move Files
-Identical to `copy`, but actively deletes the source data from your local drive once the file map has been successfully recorded in Telegram.
+Copy-then-delete: uploads files to Telegram and **deletes source files** only after the index confirms successful storage. If the upload or commit fails, source files are preserved.
 ```bash
 teleman move ./ConfidentialVault/ remote:
+teleman move ./OldProjects/ archive:legacy/ -t 8 -c 16
+
+# Preview before committing (no files uploaded or deleted)
+teleman move ./Temp/ remote: --dry-run
 ```
 
 ### Sync Files (In Development)
@@ -85,15 +89,21 @@ Teleman natively utilizes all logical CPU cores available to it. You can tightly
 - **Chunk Parameters**: 
   - `--cz`: Chunk size (e.g., `49M` for standard Cloud APIs or `1000M` for your Local API server).
 - **Encryption**: 
-  - `--encrypt` (`-e`): Passing this flag will seal all file streams natively through AES-256-GCM before exiting the local machine.
+  - `--encrypt` (`-e`): Seal all chunks with AES-256-GCM before exiting the local machine. Password is resolved from: `TELEMAN_PASSWORD` env var → interactive prompt → `--password` flag.
 - **On The Fly Archiving**:
-  - `--zip` / `--tgz`: Condenses massive directory trees down into highly transportable `.zip` chunks rather than retaining 1:1 internal directory mappings.
+  - `--zip`: Condenses directory trees into `.zip` archives before chunking.
+  - `--tgz`: Condenses directory trees into `.tar.gz` archives before chunking.
 - **Media Native UI (Spotify-Clone Mode)**:
-  - `--media`: Opt-in mapping that natively inspects single-chunk unencrypted files. Discovers media models (`.jpg`, `.mp4`, `.mp3`) and organically routes the byte-stream against Telegram's rich media `/sendAudio` protocols. Leverages pure-Go native tag-extraction to bind ID3 Metadata (Album cover/Artist strings) natively bypassing raw blobs entirely! Fallbacks safely to standard logic if the format breaks or metadata resolves corrupted.
+  - `--media`: Routes eligible single-chunk unencrypted files through Telegram's rich media endpoints (`/sendAudio`, `/sendVideo`, `/sendPhoto`). Extracts ID3 metadata (title, artist, album art) for audio files.
 - **Sync Overrides**:
-  - `--force` (`-f`): Bypasses the active index diffing engine. Explicitly forces an immediate network push of your byte chunk, ripping and overwriting destination chunk indices even if matching records indicate zero byte variation.
+  - `--force` (`-f`): Bypasses index diffing. Forces immediate re-upload of all files.
+- **Preview Mode**:
+  - `--dry-run`: Shows what would be transferred without making any changes. Works with `copy`, `sync`, `move`, and `download`.
 - **Download**:
-  - `--password`: Supply the AES-256 decryption password for chunks that were uploaded with `--encrypt`. Required only when downloading encrypted files.
+  - `--password`: Supply decryption password. Prefer `TELEMAN_PASSWORD` env var (hidden from process list) or interactive prompt.
 - **Output Control**:
   - `--verbose` (`-v`): Unlocks maximal debug and index chunk inspection data.
   - `--quiet` (`-q`): Completely suppresses the terminal to silent mode. Output isolated strictly to fatal crashes.
+
+> 📖 For security best practices and encryption architecture, see [security.md](./security.md).
+> 📖 For comprehensive command examples, see [command-guide.md](./command-guide.md).

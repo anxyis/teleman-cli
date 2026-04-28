@@ -2,9 +2,11 @@ package telegram
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -14,27 +16,51 @@ import (
 
 // Client handles interaction with the Telegram Bot API.
 type Client struct {
-	Token      string
-	APIHost    string // e.g. "https://api.telegram.org" or a local Nginx mirror
-	HTTPClient *http.Client
+	Token          string
+	APIHost        string // e.g. "https://api.telegram.org" or a local Bot API server
+	FileServerHost string // e.g. "http://192.168.0.7:9000" — separate file server for downloads (local API only)
+	HTTPClient     *http.Client
 }
 
 // NewClient initializes a new Telegram API client.
 func NewClient(token string, apiHost string) *Client {
+	return NewClientWithFileServer(token, apiHost, "")
+}
+
+// NewClientWithFileServer initializes a client with an optional separate file server for downloads.
+// When fileServerHost is set, download URLs use it directly instead of the Bot API's /file/ endpoint.
+// This is essential for local Bot API setups where files are served by a separate nginx instance.
+func NewClientWithFileServer(token string, apiHost string, fileServerHost string) *Client {
 	apiHost = strings.TrimSpace(apiHost)
 	if apiHost == "" {
 		apiHost = "https://api.telegram.org"
 	} else {
 		apiHost = strings.TrimRight(apiHost, "/")
 	}
+	fileServerHost = strings.TrimSpace(fileServerHost)
+	if fileServerHost != "" {
+		fileServerHost = strings.TrimRight(fileServerHost, "/")
+	}
 	return &Client{
-		Token:      token,
-		APIHost:    apiHost,
-		HTTPClient: &http.Client{Timeout: 30 * time.Minute}, // Large timeout for chunks
+		Token:          token,
+		APIHost:        apiHost,
+		FileServerHost: fileServerHost,
+		HTTPClient:     &http.Client{Timeout: 30 * time.Minute},
 	}
 }
 
-// rateLimitSleep simulates a basic rate limiter based on Telegram's 429
+// backoff computes an exponential backoff duration with jitter.
+// Base delay doubles each attempt: 1s, 2s, 4s, 8s... capped at 60s.
+func backoff(attempt int) time.Duration {
+	base := math.Pow(2, float64(attempt))
+	if base > 60 {
+		base = 60
+	}
+	return time.Duration(base) * time.Second
+}
+
+// handleRateLimit reads the Retry-After from a 429 response and sleeps accordingly.
+// Returns an error describing the wait for logging purposes.
 func (c *Client) handleRateLimit(resp *http.Response) error {
 	if resp.StatusCode == http.StatusTooManyRequests {
 		retryAfterStr := resp.Header.Get("Retry-After")
@@ -63,8 +89,18 @@ func (c *Client) handleRateLimit(resp *http.Response) error {
 
 // GetMe fetches information about the bot.
 func (c *Client) GetMe() (map[string]interface{}, error) {
+	return c.GetMeCtx(context.Background())
+}
+
+// GetMeCtx fetches information about the bot with context support.
+func (c *Client) GetMeCtx(ctx context.Context) (map[string]interface{}, error) {
 	url := fmt.Sprintf("%s/bot%s/getMe", c.APIHost, c.Token)
-	resp, err := c.HTTPClient.Get(url)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +126,11 @@ func (c *Client) GetMe() (map[string]interface{}, error) {
 
 // SendDocument uploads a chunk stream as a document to Telegram.
 func (c *Client) SendDocument(chatID string, threadID string, filename string, r io.Reader) (string, int64, error) {
+	return c.SendDocumentCtx(context.Background(), chatID, threadID, filename, r)
+}
+
+// SendDocumentCtx uploads a chunk stream as a document to Telegram with context support for cancellation.
+func (c *Client) SendDocumentCtx(ctx context.Context, chatID string, threadID string, filename string, r io.Reader) (string, int64, error) {
 	url := fmt.Sprintf("%s/bot%s/sendDocument", c.APIHost, c.Token)
 
 	pr, pw := io.Pipe()
@@ -101,7 +142,7 @@ func (c *Client) SendDocument(chatID string, threadID string, filename string, r
 		if threadID != "" {
 			writer.WriteField("message_thread_id", threadID)
 		}
-		
+
 		// Force Telegram to treat this as a pure raw file, not rich media
 		writer.WriteField("disable_content_type_detection", "true")
 
@@ -112,25 +153,29 @@ func (c *Client) SendDocument(chatID string, threadID string, filename string, r
 		writer.Close()
 	}()
 
-	req, err := http.NewRequest("POST", url, pr)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
 	if err != nil {
 		return "", 0, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// Simple loop to handle 429 Flood Wait at client level
-	for attempt := 0; attempt < 3; attempt++ {
+	// Exponential backoff retry loop for 429 Flood Wait
+	for attempt := 0; attempt < 5; attempt++ {
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
+			// Check if context was cancelled
+			if ctx.Err() != nil {
+				return "", 0, fmt.Errorf("operation cancelled: %w", ctx.Err())
+			}
 			return "", 0, err
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			c.handleRateLimit(resp)
 			resp.Body.Close()
-			// Because we piped the reader, doing a blind retry here actually fails 
-			// if the body reader was totally consumed. For MVP, we return error to let the Chunk Engine retry.
-			return "", 0, fmt.Errorf("rate limited")
+			// Because we piped the reader, doing a blind retry here actually fails
+			// if the body reader was totally consumed. Return error to let the Chunk Engine retry.
+			return "", 0, fmt.Errorf("rate limited after %d attempts", attempt+1)
 		}
 
 		defer resp.Body.Close()
@@ -161,6 +206,11 @@ func (c *Client) SendDocument(chatID string, threadID string, filename string, r
 
 // SendMedia uploads a stream using a specific media endpoint (sendPhoto, sendVideo, sendAudio).
 func (c *Client) SendMedia(chatID string, threadID string, filename string, r io.Reader, method string, fieldName string, params map[string]string, thumbData []byte) (string, int64, error) {
+	return c.SendMediaCtx(context.Background(), chatID, threadID, filename, r, method, fieldName, params, thumbData)
+}
+
+// SendMediaCtx uploads a stream using a specific media endpoint with context support.
+func (c *Client) SendMediaCtx(ctx context.Context, chatID string, threadID string, filename string, r io.Reader, method string, fieldName string, params map[string]string, thumbData []byte) (string, int64, error) {
 	url := fmt.Sprintf("%s/bot%s/%s", c.APIHost, c.Token, method)
 
 	pr, pw := io.Pipe()
@@ -193,22 +243,25 @@ func (c *Client) SendMedia(chatID string, threadID string, filename string, r io
 		writer.Close()
 	}()
 
-	req, err := http.NewRequest("POST", url, pr)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
 	if err != nil {
 		return "", 0, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 5; attempt++ {
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", 0, fmt.Errorf("operation cancelled: %w", ctx.Err())
+			}
 			return "", 0, err
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			c.handleRateLimit(resp)
 			resp.Body.Close()
-			return "", 0, fmt.Errorf("rate limited")
+			return "", 0, fmt.Errorf("rate limited after %d attempts", attempt+1)
 		}
 
 		defer resp.Body.Close()
@@ -270,7 +323,7 @@ func (c *Client) SendMedia(chatID string, threadID string, filename string, r io
 		if fileID == "" {
 			return "", 0, fmt.Errorf("Telegram API returned success but failed to locate file_id in response structure")
 		}
-		
+
 		return fileID, msgID, nil
 	}
 	return "", 0, fmt.Errorf("max retries exceeded")
@@ -278,53 +331,110 @@ func (c *Client) SendMedia(chatID string, threadID string, filename string, r io
 
 // GetFile requests file metadata (specifically the path) needed for download
 func (c *Client) GetFile(fileID string) (string, error) {
+	return c.GetFileCtx(context.Background(), fileID)
+}
+
+// GetFileCtx requests file metadata with context support.
+func (c *Client) GetFileCtx(ctx context.Context, fileID string) (string, error) {
 	url := fmt.Sprintf("%s/bot%s/getFile?file_id=%s", c.APIHost, c.Token, fileID)
-	resp, err := c.HTTPClient.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
 
-	if err := c.handleRateLimit(resp); err != nil {
-		return "", err
-	}
+	for attempt := 0; attempt < 5; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return "", err
+		}
 
-	var result struct {
-		Ok     bool `json:"ok"`
-		Result struct {
-			FilePath string `json:"file_path"`
-		} `json:"result"`
-		Desc string `json:"description"`
-	}
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", fmt.Errorf("operation cancelled: %w", ctx.Err())
+			}
+			return "", err
+		}
+		defer resp.Body.Close()
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			c.handleRateLimit(resp)
+			continue
+		}
 
-	if !result.Ok {
-		return "", fmt.Errorf("Telegram API Error: %s", result.Desc)
-	}
+		var result struct {
+			Ok     bool `json:"ok"`
+			Result struct {
+				FilePath string `json:"file_path"`
+			} `json:"result"`
+			Desc string `json:"description"`
+		}
 
-	return result.Result.FilePath, nil
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return "", err
+		}
+
+		if !result.Ok {
+			return "", fmt.Errorf("Telegram API Error: %s", result.Desc)
+		}
+
+		return result.Result.FilePath, nil
+	}
+	return "", fmt.Errorf("max retries exceeded for getFile")
 }
 
 // DownloadFileStream downloads a file directly from Telegram's API using its file_path
 func (c *Client) DownloadFileStream(filePath string) (io.ReadCloser, error) {
-	url := fmt.Sprintf("%s/file/bot%s/%s", c.APIHost, c.Token, filePath)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
+	return c.DownloadFileStreamCtx(context.Background(), filePath)
+}
+
+// DownloadFileStreamCtx downloads a file with context support and exponential backoff.
+// When FileServerHost is configured, downloads go directly to the file server (e.g. nginx)
+// instead of the Bot API's /file/ endpoint. This is required for local Bot API setups.
+func (c *Client) DownloadFileStreamCtx(ctx context.Context, filePath string) (io.ReadCloser, error) {
+	var url string
+	if c.FileServerHost != "" {
+		// Local API + file server: nginx serves the bot data directory directly.
+		// The local Bot API returns absolute container paths like:
+		//   /var/lib/telegram-bot-api/<token>/documents/file_0.txt
+		// Strip the known data directory prefix so we get a path relative to nginx's document root.
+		cleanPath := filePath
+		knownPrefixes := []string{
+			"/var/lib/telegram-bot-api/",
+			"./",
+		}
+		for _, prefix := range knownPrefixes {
+			if strings.HasPrefix(cleanPath, prefix) {
+				cleanPath = strings.TrimPrefix(cleanPath, prefix)
+				break
+			}
+		}
+		cleanPath = strings.TrimLeft(cleanPath, "/")
+		url = fmt.Sprintf("%s/%s", c.FileServerHost, cleanPath)
+	} else {
+		// Cloud API: standard Telegram download endpoint
+		url = fmt.Sprintf("%s/file/bot%s/%s", c.APIHost, c.Token, filePath)
 	}
 
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 5; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("operation cancelled: %w", ctx.Err())
+			}
 			return nil, err
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			c.handleRateLimit(resp)
 			resp.Body.Close()
+			// Exponential backoff before retry
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff(attempt)):
+			}
 			continue
 		}
 
@@ -363,7 +473,7 @@ func (c *Client) GetChat(chatID string) error {
 	}
 
 	var result struct {
-		Ok     bool `json:"ok"`
+		Ok   bool   `json:"ok"`
 		Desc string `json:"description"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

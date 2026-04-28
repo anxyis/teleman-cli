@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,7 +19,8 @@ import (
 // RunDownload handles downloading files from a virtual Telegram target to the local filesystem.
 // It resolves the target alias, loads the namespaced index, matches virtual paths using safe
 // prefix boundaries, and reassembles chunks via the chunker engine's verified pipeline.
-func RunDownload(targetRaw, localDest string, password []byte) error {
+// Accepts context for graceful shutdown and TransferOptions for consistent flag handling.
+func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.TransferOptions) error {
 	// 1. Load config
 	cfg, err := config.Load()
 	if err != nil {
@@ -42,8 +44,8 @@ func RunDownload(targetRaw, localDest string, password []byte) error {
 
 	// 3. API Connectivity Check
 	logger.Step("=> Initializing API Client...")
-	client := telegram.NewClient(cfg.ActiveToken, cfg.CustomAPIHost)
-	me, err := client.GetMe()
+	client := telegram.NewClientWithFileServer(cfg.ActiveToken, cfg.CustomAPIHost, cfg.FileServerHost)
+	me, err := client.GetMeCtx(ctx)
 	if err != nil {
 		return fmt.Errorf("API connectivity failed: %v", err)
 	}
@@ -95,9 +97,28 @@ func RunDownload(targetRaw, localDest string, password []byte) error {
 
 	logger.Step("=> Found %d files to download", len(matchedPaths))
 
+	// Dry-run mode
+	if opts.DryRun {
+		logger.Info("=> [DRY RUN] Would download %d files:", len(matchedPaths))
+		for _, vPath := range matchedPaths {
+			entry := targetFiles[vPath]
+			logger.Info("   %s (%d bytes, %d chunks)", vPath, entry.Size, len(entry.Chunks))
+		}
+		return nil
+	}
+
 	// 7. Download pipeline
 	var downloaded, errors int
 	for i, vPath := range matchedPaths {
+		// Check for cancellation between files
+		select {
+		case <-ctx.Done():
+			logger.Warn("=> Download interrupted after %d/%d files.", i, len(matchedPaths))
+			logger.Success("=> Download Summary: %d Downloaded, %d Errors", downloaded, errors)
+			return fmt.Errorf("download cancelled: %w", ctx.Err())
+		default:
+		}
+
 		entry := targetFiles[vPath]
 
 		// Determine local path relative to the prefix
@@ -125,7 +146,7 @@ func RunDownload(targetRaw, localDest string, password []byte) error {
 		// Write to a temp file first, then rename on success.
 		// This leaves a clean .partial file on failure, making future resume trivial.
 		tmpPath := localPath + ".partial"
-		if err := downloadFile(engine, entry, tmpPath, password); err != nil {
+		if err := downloadFile(ctx, engine, entry, tmpPath, opts.Password); err != nil {
 			logger.Error("      [Error] %v", err)
 			errors++
 			continue
@@ -149,14 +170,14 @@ func RunDownload(targetRaw, localDest string, password []byte) error {
 }
 
 // downloadFile creates a file at the given path and streams reassembled chunks into it.
-func downloadFile(engine *chunker.Engine, entry *models.FileEntry, destPath string, password []byte) error {
+func downloadFile(ctx context.Context, engine *chunker.Engine, entry *models.FileEntry, destPath string, password []byte) error {
 	f, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %v", destPath, err)
 	}
 	defer f.Close()
 
-	if err := engine.ReassembleStream(entry.Chunks, f, password); err != nil {
+	if err := engine.ReassembleStreamCtx(ctx, entry.Chunks, f, password); err != nil {
 		return fmt.Errorf("reassembly failed: %v", err)
 	}
 

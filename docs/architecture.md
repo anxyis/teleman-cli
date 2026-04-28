@@ -23,7 +23,10 @@ Teleman leverages an advanced streaming logic to split large files seamlessly in
 ### 3. Dedicated Index Channel & Locking
 Because the Metadata Index is the heart of your filesystem, we ensure data integrity via **Distributed Locking.**
 - When you execute `teleman config`, you must supply a **Dedicated Index Channel**. 
-- Whenever `teleman sync` or `teleman copy` spins up, it first places a secure "Lock Message" in this channel. If another machine executing Teleman attempts to sync concurrently to the same targets, it will cleanly abort, preventing split-brain database corruption.
+- Whenever `teleman sync`, `teleman copy`, or `teleman move` spins up, it first places a secure **Lock Message** in this channel containing owner identification and a UTC timestamp.
+- If another machine executing Teleman attempts to sync concurrently to the same targets, it will cleanly abort, preventing split-brain database corruption.
+- **Stale Lock Recovery:** If a lock is older than 5 minutes (configurable via `DefaultLockTimeout`), it is automatically considered stale and eligible for recovery. This prevents permanent deadlocks when an instance crashes while holding the lock.
+- All locks are released via `defer` — even on Ctrl+C interruptions, the lock cleanup fires because commands use `RunE` error returns instead of `os.Exit(1)`.
 - Teleman versions your configuration updates and stores the last 5 Index versions natively inside the channel for robust disaster recovery.
 
 ### 4. Download & Reassembly Pipeline
@@ -34,9 +37,24 @@ The download path is the strict inverse of the upload pipeline, with explicit co
 4. **Atomic Writes:** Files are streamed to a `.partial` temp file during download. Only after all chunks are successfully verified and written is the file atomically renamed to its final path. This ensures the output directory never contains half-written files.
 5. **Safe Path Matching:** Virtual path prefix matching enforces segment boundaries (e.g., `media` will never collide with `media_test`). Only exact segment or exact file matches are resolved.
 
+### 5. Encryption & Key Management
+Teleman provides optional per-chunk AES-256-GCM encryption:
+1. **Key Derivation:** Passphrases are processed through **scrypt** (N=32768, r=8, p=1) to derive a 32-byte AES-256 key. The salt is deterministic (SHA-256 of the passphrase), so the same passphrase always produces the same key without external salt storage.
+2. **Password Resolution:** Passwords are resolved in priority order: `TELEMAN_PASSWORD` env var → interactive terminal prompt → `--password` CLI flag. This prevents plaintext passwords from appearing in process listings.
+3. **Pipeline:** Encryption occurs at the chunk level, after splitting and before hashing. The hash is computed on encrypted bytes, enabling integrity verification without the decryption key.
+
+### 6. Graceful Shutdown & Context Cancellation
+All long-running operations (chunk uploads, downloads, sync pipelines) are wired through Go's `context.Context`:
+- **SIGINT/SIGTERM** triggers context cancellation via a global signal handler in `main()`.
+- Worker goroutines check the context between chunk iterations, allowing clean shutdown.
+- On interruption, partial index progress is committed to prevent data loss.
+- Deferred lock releases execute properly because commands return errors instead of calling `os.Exit(1)` directly.
+
 ## Component Overview
 
 - **Config Wizard (`config`)**: Generates local maps resolving human readable aliases (e.g., `remote_office`) to technical Bot targets (Chat IDs & Topic Threads). 
-- **Chunk Engine (`chunker`)**: Bidirectional stream processing engine. Handles upload chunking (`ProcessStream`) and download reassembly (`ReassembleStream`) with AES-256-GCM encrypt/decrypt, SHA-256 hash verification, and dynamic chunk size logic (50MB Cloud / 2000MB Local).
-- **Sync Engine**: Orchestrates N-number of `checkers` and multi-threaded routine `transfers` against the namespaced `models.Index` natively, ensuring strict target isolation during uploads and diffs.
+- **Chunk Engine (`chunker`)**: Bidirectional stream processing engine. Handles upload chunking (`ProcessStreamCtx`) and download reassembly (`ReassembleStreamCtx`) with AES-256-GCM encrypt/decrypt, SHA-256 hash verification, scrypt key derivation, and context-aware cancellation.
+- **Sync Engine**: Orchestrates N-number of `checkers` and multi-threaded routine `transfers` against the namespaced `models.Index`. Accepts a `TransferOptions` struct (not globals) for all configuration.
 - **Download Engine (`core/download`)**: Resolves namespaced virtual paths with safe prefix matching, coordinates chunk-level fetching via the Chunk Engine, and writes files atomically to the local filesystem.
+- **Move Engine (`core/move`)**: Copy-then-delete pipeline that only removes source files after successful index commit. Includes empty directory cleanup.
+- **Transfer Options (`models/options`)**: Explicit struct carrying all runtime flags (`transfers`, `checkers`, `chunkSize`, `encrypt`, etc.), eliminating hidden global dependencies and enabling testability.

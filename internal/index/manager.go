@@ -96,8 +96,8 @@ func (m *Manager) ReleaseLock() error {
 
 // PushVersion uploads a new index and maintains history.
 func (m *Manager) PushVersion(idx *models.Index) error {
-	// Serialize
-	data, err := json.MarshalIndent(idx, "", "  ")
+	// Serialize (compressed format to save massive payload sizes)
+	data, err := json.Marshal(idx)
 	if err != nil {
 		return err
 	}

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/teleman-cli/teleman/internal/models"
 )
 
 // Client handles interaction with the Telegram Bot API.
@@ -22,30 +24,95 @@ type Client struct {
 	HTTPClient     *http.Client
 }
 
-// NewClient initializes a new Telegram API client.
-func NewClient(token string, apiHost string) *Client {
-	return NewClientWithFileServer(token, apiHost, "")
+// testEndpoint checks if a URL is reachable within a short timeout.
+func testEndpoint(url string) bool {
+	if url == "" {
+		return false
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	// As long as the server responds (even 401/404), it's reachable.
+	return true
 }
 
-// NewClientWithFileServer initializes a client with an optional separate file server for downloads.
-// When fileServerHost is set, download URLs use it directly instead of the Bot API's /file/ endpoint.
-// This is essential for local Bot API setups where files are served by a separate nginx instance.
-func NewClientWithFileServer(token string, apiHost string, fileServerHost string) *Client {
-	apiHost = strings.TrimSpace(apiHost)
-	if apiHost == "" {
-		apiHost = "https://api.telegram.org"
-	} else {
-		apiHost = strings.TrimRight(apiHost, "/")
+// resolveAPIHost tests the Local, Tailscale, and Public hosts in order and returns the first reachable one.
+// If none are reachable, it returns the first configured one as a last resort.
+func resolveAPIHost(token string, hosts models.HostMap) string {
+	candidates := []string{hosts.Local, hosts.Tailscale, hosts.Public}
+	var firstConfigured string
+
+	for _, host := range candidates {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		host = strings.TrimRight(host, "/")
+		
+		if firstConfigured == "" {
+			firstConfigured = host
+		}
+		
+		// For the Bot API, we test the /getMe endpoint
+		testURL := fmt.Sprintf("%s/bot%s/getMe", host, token)
+		if testEndpoint(testURL) {
+			return host
+		}
 	}
-	fileServerHost = strings.TrimSpace(fileServerHost)
-	if fileServerHost != "" {
-		fileServerHost = strings.TrimRight(fileServerHost, "/")
+	
+	// If none are reachable, return the first one they configured so the error output makes sense
+	return firstConfigured
+}
+
+// resolveFileHost tests the Local, Tailscale, and Public hosts in order and returns the first reachable one.
+func resolveFileHost(hosts models.HostMap) string {
+	candidates := []string{hosts.Local, hosts.Tailscale, hosts.Public}
+	for _, host := range candidates {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		host = strings.TrimRight(host, "/")
+		if testEndpoint(host) {
+			return host
+		}
 	}
+	return ""
+}
+
+// NewSmartClient initializes a client by intelligently falling back between local, tailscale, and public endpoints.
+func NewSmartClient(token string, apiHosts models.HostMap, fileHosts models.HostMap) *Client {
+	apiHost := resolveAPIHost(token, apiHosts)
+	fileHost := resolveFileHost(fileHosts)
+
+	fmt.Printf("Using API Endpoint: %s\n", apiHost)
+	if fileHost != "" {
+		fmt.Printf("Using File Server Endpoint: %s\n", fileHost)
+	}
+
+	// Custom transport optimized for high-throughput concurrent uploads
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   100, // Prevent dropping keep-alives when running many concurrent transfers
+		MaxConnsPerHost:       100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	return &Client{
 		Token:          token,
 		APIHost:        apiHost,
-		FileServerHost: fileServerHost,
-		HTTPClient:     &http.Client{Timeout: 30 * time.Minute},
+		FileServerHost: fileHost,
+		HTTPClient:     &http.Client{
+			Transport: transport,
+			Timeout:   30 * time.Minute,
+		},
 	}
 }
 

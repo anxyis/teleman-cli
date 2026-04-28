@@ -17,8 +17,9 @@ type TransferOptions struct {
 	TgzMode   bool   // Compress source into streaming tar.gz archive
 	MediaMode bool   // Route eligible files to Telegram media endpoints
 	Force     bool   // Bypass index diffing, force re-upload
-	DryRun    bool   // Show what would be transferred without mutating state
-	Password  []byte // Encryption/decryption passphrase (derived from env, prompt, or flag)
+	DryRun           bool   // Show what would be transferred without mutating state
+	Password         []byte // Encryption/decryption passphrase (derived from env, prompt, or flag)
+	AutoUpgradeChunk bool   // Indicates if --cz was left at default and can be auto-upgraded for local APIs
 }
 
 // ParseChunkSize converts a human-readable size string (e.g., "49M", "1G", "512K")

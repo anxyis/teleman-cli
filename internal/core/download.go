@@ -44,7 +44,7 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 
 	// 3. API Connectivity Check
 	logger.Step("=> Initializing API Client...")
-	client := telegram.NewClientWithFileServer(cfg.ActiveToken, cfg.CustomAPIHost, cfg.FileServerHost)
+	client := telegram.NewSmartClient(cfg.ActiveToken, cfg.APIHosts, cfg.FileServerHosts)
 	me, err := client.GetMeCtx(ctx)
 	if err != nil {
 		return fmt.Errorf("API connectivity failed: %v", err)

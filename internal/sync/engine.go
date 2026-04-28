@@ -39,7 +39,12 @@ func NewSyncEngine(opts *models.TransferOptions) (*SyncEngine, error) {
 		return nil, fmt.Errorf("failed to load config: %v", err)
 	}
 
-	client := telegram.NewClient(cfg.ActiveToken, cfg.CustomAPIHost)
+	client := telegram.NewSmartClient(cfg.ActiveToken, cfg.APIHosts, cfg.FileServerHosts)
+
+	if opts.AutoUpgradeChunk && !strings.Contains(client.APIHost, "api.telegram.org") {
+		logger.Info("   [Auto-Detect] Local API detected. Upgrading chunk size from 49M to 1999M limit.")
+		opts.ChunkSize = 1999 * 1024 * 1024
+	}
 
 	idxManager, err := index.NewManager(client, cfg.IndexChannelID)
 	if err != nil {

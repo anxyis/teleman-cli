@@ -70,7 +70,7 @@ var syncCmd = &cobra.Command{
 		target := args[1]
 		logger.Step("Starting Sync:\n Source: %s\n Target: %s", source, target)
 
-		opts, err := buildTransferOptions()
+		opts, err := buildTransferOptions(cmd)
 		if err != nil {
 			return err
 		}
@@ -96,7 +96,7 @@ var copyCmd = &cobra.Command{
 		target := args[1]
 		logger.Step("Starting Copy:\n Source: %s\n Target: %s", source, target)
 
-		opts, err := buildTransferOptions()
+		opts, err := buildTransferOptions(cmd)
 		if err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ var moveCmd = &cobra.Command{
 		target := args[1]
 		logger.Step("Starting Move:\n Source: %s\n Target: %s", source, target)
 
-		opts, err := buildTransferOptions()
+		opts, err := buildTransferOptions(cmd)
 		if err != nil {
 			return err
 		}
@@ -188,7 +188,7 @@ var lsCmd = &cobra.Command{
 			return fmt.Errorf("target alias '%s' not found", alias)
 		}
 
-		client := telegram.NewClient(cfg.ActiveToken, cfg.CustomAPIHost)
+		client := telegram.NewSmartClient(cfg.ActiveToken, cfg.APIHosts, cfg.FileServerHosts)
 		mgr, err := index.NewManager(client, cfg.IndexChannelID)
 		if err != nil {
 			return fmt.Errorf("index init error: %v", err)
@@ -225,6 +225,36 @@ var lsCmd = &cobra.Command{
 	},
 }
 
+var deleteCmd = &cobra.Command{
+	Use:   "delete [target_alias]:[path]",
+	Short: "Delete files under a target path without removing subdirectories",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		opts := &core.DeleteOptions{
+			Recursive: false,
+			DryRun:    dryRun,
+			Confirm:   true, // non-recursive delete doesn't strictly need a prompt
+			Transfers: transfers,
+		}
+		return core.RunDelete(globalCtx, args[0], opts)
+	},
+}
+
+var purgeCmd = &cobra.Command{
+	Use:   "purge [target_alias]:[path]",
+	Short: "Recursively delete files and directories under a target path",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		opts := &core.DeleteOptions{
+			Recursive: true,
+			DryRun:    dryRun,
+			Confirm:   confirm,
+			Transfers: transfers,
+		}
+		return core.RunDelete(globalCtx, args[0], opts)
+	},
+}
+
 // Flag variables — still declared at package level for cobra binding,
 // but converted to TransferOptions before passing to any internal function.
 var (
@@ -237,6 +267,7 @@ var (
 	mediaMode        bool
 	force            bool
 	dryRun           bool
+	confirm          bool
 	verbose          bool
 	quiet            bool
 	downloadPassword string
@@ -245,7 +276,7 @@ var (
 // buildTransferOptions converts CLI flags into a TransferOptions struct.
 // Validates chunk size early so the user gets immediate feedback on bad input.
 // Resolves encryption password from env var, interactive prompt, or --password flag.
-func buildTransferOptions() (*models.TransferOptions, error) {
+func buildTransferOptions(cmd *cobra.Command) (*models.TransferOptions, error) {
 	parsedChunkSize, err := models.ParseChunkSize(chunkSize)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --cz value: %v", err)
@@ -275,9 +306,10 @@ func buildTransferOptions() (*models.TransferOptions, error) {
 		ZipMode:   zipMode,
 		TgzMode:   tgzMode,
 		MediaMode: mediaMode,
-		Force:     force,
-		DryRun:    dryRun,
-		Password:  password,
+		Force:            force,
+		DryRun:           dryRun,
+		Password:         password,
+		AutoUpgradeChunk: cmd != nil && !cmd.Flags().Changed("cz"),
 	}, nil
 }
 
@@ -360,6 +392,15 @@ func init() {
 	rootCmd.AddCommand(moveCmd)
 	rootCmd.AddCommand(downloadCmd)
 	rootCmd.AddCommand(lsCmd)
+	rootCmd.AddCommand(deleteCmd)
+	rootCmd.AddCommand(purgeCmd)
+
+	deleteCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be deleted without making changes")
+	deleteCmd.Flags().IntVarP(&transfers, "transfers", "t", 4, "Number of parallel physical deletion workers")
+
+	purgeCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be deleted without making changes")
+	purgeCmd.Flags().BoolVar(&confirm, "confirm", false, "Bypass interactive confirmation prompt")
+	purgeCmd.Flags().IntVarP(&transfers, "transfers", "t", 4, "Number of parallel physical deletion workers")
 }
 
 func main() {

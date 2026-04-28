@@ -54,6 +54,7 @@ teleman config
 The wizard will ask for:
 - Your **Bot Token** (get one from `@BotFather` on Telegram)
 - A **Dedicated Index Channel ID** (e.g. `-100123456789`) — Teleman stores its metadata here
+- **Smart IP Endpoints** for your API and File Server. You can set **Local** (192.168.x.x), **Tailscale** (100.x.x.x), and **Public** domains. Teleman will automatically ping and route through the fastest available one!
 - One or more **Target Aliases** — human-readable names like `backup`, `remote`, or `nas` that map to specific Chat IDs and Topic Thread IDs
 
 ---
@@ -305,9 +306,13 @@ Teleman exposes two concurrency pools you can tune:
 | `-t` / `--transfers` | `4` | Parallel HTTP upload/download workers |
 | `-c` / `--checkers` | `8` | Parallel disk scanner / index diff workers |
 
+Teleman uses a custom `http.Transport` initialized with a massive `100` MaxIdleConnsPerHost connection pool. This prevents TLS handshake drops even on extreme worker settings.
+
 ### Tuning for a Local Bot API Server
 
-If you're running [Telegram's Local Bot API Server](https://github.com/tdlib/telegram-bot-api) on your LAN, you can push very high concurrency since there is no rate limiting and chunk sizes can exceed 49MB.
+If you're running [Telegram's Local Bot API Server](https://github.com/tdlib/telegram-bot-api), Teleman is designed to instantly detect it.
+
+> **Auto-Upgrade Logic**: If Teleman detects you are routed through a non-public endpoint (like your Local or Tailscale IP), it **automatically upgrades your Chunk Size limit from 49MB to 2GB**. It will also seamlessly pre-allocate memory chunks precisely to file sizes, preserving your RAM.
 
 ```bash
 # Max throughput on local API: 16 upload threads, 32 checkers

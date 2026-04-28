@@ -57,7 +57,14 @@ func RunWizard() error {
 			Message: "Manage Config & Targets:",
 			Options: []string{"n)ew target", "e)dit targets", "d)elete target", "g)lobal settings", "q)uit"},
 		}
-		survey.AskOne(prompt, &action)
+		if err := survey.AskOne(prompt, &action); err != nil {
+			fmt.Println("Exiting wizard.")
+			return nil
+		}
+		
+		if len(action) == 0 {
+			continue
+		}
 
 		switch action[0] {
 		case 'n':
@@ -106,11 +113,6 @@ func RunWizard() error {
 }
 
 func setupGlobal(cfg *models.Config) error {
-	apiDefault := "https://api.telegram.org"
-	if cfg.CustomAPIHost != "" {
-		apiDefault = cfg.CustomAPIHost
-	}
-
 	tokenMsg := "Telegram Bot Token:"
 	if cfg.ActiveToken != "" {
 		tokenMsg = "Telegram Bot Token (Leave blank to keep unchanged):"
@@ -128,16 +130,9 @@ func setupGlobal(cfg *models.Config) error {
 			Prompt: &survey.Input{
 				Message: "Dedicated Index Channel ID (e.g. -100123456789):",
 				Default: cfg.IndexChannelID,
-				Help:    "Teleman requires a dedicated private channel to store virtual filesystem indexes (single source of truth).",
+				Help:    "Teleman requires a dedicated private channel to store virtual filesystem indexes.",
 			},
 			Validate: survey.Required,
-		},
-		{
-			Name: "api",
-			Prompt: &survey.Input{
-				Message: "Custom API Host (Leave blank for default api.telegram.org):",
-				Default: apiDefault,
-			},
 		},
 	}
 
@@ -148,7 +143,6 @@ func setupGlobal(cfg *models.Config) error {
 	answers := struct {
 		Token   string
 		Channel string
-		API     string
 	}{}
 
 	err := survey.Ask(qs, &answers)
@@ -160,19 +154,88 @@ func setupGlobal(cfg *models.Config) error {
 		cfg.ActiveToken = strings.TrimSpace(answers.Token)
 	}
 	cfg.IndexChannelID = parseChatID(answers.Channel, "channel")
-	cfg.CustomAPIHost = strings.TrimSpace(answers.API)
 
-	// If using a custom API host (local Bot API), ask for optional file server
-	if cfg.CustomAPIHost != "" && cfg.CustomAPIHost != "https://api.telegram.org" {
-		var fileServer string
-		prompt := &survey.Input{
-			Message: "File Server Host for downloads (e.g. http://192.168.0.7:9000, blank to skip):",
-			Default: cfg.FileServerHost,
-			Help:    "If your local Bot API stores files on disk and you serve them via nginx/caddy, enter that URL here. Downloads will fetch files from this server instead of the Bot API's /file/ endpoint.",
-		}
-		survey.AskOne(prompt, &fileServer)
-		cfg.FileServerHost = strings.TrimSpace(fileServer)
+	fmt.Println("\n--- Bot API Server Endpoints ---")
+	fmt.Println("Set your custom Bot API endpoints (e.g., http://192.168.x.x:8081). Leave blank to skip.")
+	
+	apiQs := []*survey.Question{
+		{
+			Name: "local",
+			Prompt: &survey.Input{
+				Message: "Local IP Endpoint:",
+				Default: cfg.APIHosts.Local,
+			},
+		},
+		{
+			Name: "tailscale",
+			Prompt: &survey.Input{
+				Message: "Tailscale IP Endpoint:",
+				Default: cfg.APIHosts.Tailscale,
+			},
+		},
+		{
+			Name: "public",
+			Prompt: &survey.Input{
+				Message: "Public IP/Domain Endpoint:",
+				Default: cfg.APIHosts.Public,
+			},
+		},
 	}
+
+	apiAnswers := struct {
+		Local     string
+		Tailscale string
+		Public    string
+	}{}
+
+	if err := survey.Ask(apiQs, &apiAnswers); err != nil {
+		return err
+	}
+	
+	cfg.APIHosts.Local = strings.TrimSpace(apiAnswers.Local)
+	cfg.APIHosts.Tailscale = strings.TrimSpace(apiAnswers.Tailscale)
+	cfg.APIHosts.Public = strings.TrimSpace(apiAnswers.Public)
+
+	fmt.Println("\n--- File Server Endpoints ---")
+	fmt.Println("Set your file server endpoints (e.g., http://192.168.x.x:9000). Leave blank to skip.")
+	
+	fsQs := []*survey.Question{
+		{
+			Name: "local",
+			Prompt: &survey.Input{
+				Message: "Local IP File Server:",
+				Default: cfg.FileServerHosts.Local,
+			},
+		},
+		{
+			Name: "tailscale",
+			Prompt: &survey.Input{
+				Message: "Tailscale IP File Server:",
+				Default: cfg.FileServerHosts.Tailscale,
+			},
+		},
+		{
+			Name: "public",
+			Prompt: &survey.Input{
+				Message: "Public IP/Domain File Server:",
+				Default: cfg.FileServerHosts.Public,
+			},
+		},
+	}
+
+	fsAnswers := struct {
+		Local     string
+		Tailscale string
+		Public    string
+	}{}
+
+	if err := survey.Ask(fsQs, &fsAnswers); err != nil {
+		return err
+	}
+
+	cfg.FileServerHosts.Local = strings.TrimSpace(fsAnswers.Local)
+	cfg.FileServerHosts.Tailscale = strings.TrimSpace(fsAnswers.Tailscale)
+	cfg.FileServerHosts.Public = strings.TrimSpace(fsAnswers.Public)
 
 	return Save(cfg)
 }

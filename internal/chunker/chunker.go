@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -61,8 +62,6 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 	var chunks []*models.ChunkEntry
 	var offset int64
 
-	buf := make([]byte, e.ChunkSize)
-
 	for {
 		// Check for cancellation before reading the next chunk
 		select {
@@ -71,10 +70,58 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 		default:
 		}
 
-		n, err := io.ReadFull(r, buf)
-		if n > 0 {
-			chunkData := buf[:n]
+		var expectedSize int64 = 0
+		// If we can determine the exact remaining size, pre-allocate exactly that
+		if f, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
+			if stat, err := f.Stat(); err == nil {
+				rem := stat.Size() - offset
+				if rem > 0 && rem < e.ChunkSize {
+					expectedSize = rem
+				} else if rem >= e.ChunkSize {
+					expectedSize = e.ChunkSize
+				}
+			}
+		}
 
+		// Fallback for streams (e.g. zip/tgz): allocate a reasonable 1MB to start, avoiding massive GC pressure
+		if expectedSize == 0 {
+			expectedSize = 1024 * 1024 
+			if expectedSize > e.ChunkSize {
+				expectedSize = e.ChunkSize
+			}
+		}
+
+		chunkData := make([]byte, 0, expectedSize)
+		tmp := make([]byte, 64*1024) // 64KB read buffer
+		var readErr error
+		var nBytes int64
+
+		for nBytes < e.ChunkSize {
+			toRead := len(tmp)
+			if e.ChunkSize-nBytes < int64(toRead) {
+				toRead = int(e.ChunkSize - nBytes)
+			}
+			n, err := r.Read(tmp[:toRead])
+			if n > 0 {
+				chunkData = append(chunkData, tmp[:n]...)
+				nBytes += int64(n)
+			}
+			if err != nil {
+				readErr = err
+				break
+			}
+		}
+
+		if nBytes == 0 && readErr == io.EOF {
+			break
+		}
+
+		if readErr != nil && readErr != io.EOF {
+			return nil, readErr
+		}
+
+		isEOF := (readErr == io.EOF)
+		if nBytes > 0 {
 			var isEncrypted bool
 			if len(password) > 0 {
 				encryptedData, encErr := encryptAES(chunkData, password)
@@ -91,8 +138,6 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 			var fileID string
 			var msgID int64
 			var upErr error
-
-			isEOF := (err == io.EOF || err == io.ErrUnexpectedEOF)
 
 			var chunkName string
 			if len(chunks) == 0 && isEOF {
@@ -194,14 +239,11 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 				Encrypted: isEncrypted,
 			}
 			chunks = append(chunks, entry)
-			offset += int64(n)
+			offset += nBytes
 		}
 
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
+		if isEOF {
 			break
-		}
-		if err != nil {
-			return nil, err
 		}
 	}
 
@@ -259,12 +301,19 @@ func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.Chunk
 		}
 
 		// Read chunk bytes (we need the full chunk in memory for hash verification)
-		// This is bounded by ChunkSize (typically 49MB), not the entire file.
-		chunkData, err := io.ReadAll(stream)
+		// Pre-allocate the exact slice capacity to bypass massive slice growth overhead
+		expectedSize := chunk.Size
+		if expectedSize <= 0 {
+			expectedSize = 1024 * 1024 // 1MB fallback
+		}
+		
+		buf := bytes.NewBuffer(make([]byte, 0, expectedSize))
+		_, err = buf.ReadFrom(stream)
 		stream.Close()
 		if err != nil {
 			return fmt.Errorf("chunk %d/%d: failed to read stream: %v", i+1, len(sorted), err)
 		}
+		chunkData := buf.Bytes()
 
 		// 4. Strict hash verification BEFORE any decryption
 		// The hash was computed on the encrypted bytes during upload,

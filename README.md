@@ -10,6 +10,8 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
 ## 🌟 Core Features
 
 - **Painless Storage Scaling**: By capitalizing on Telegram’s limitless native cloud architecture, you can backup massive local datasets completely free.
+- **Smart IP Routing**: Automatically probes and falls back between Local, Tailscale, and Public endpoints. If you leave your home network, the CLI seamlessly finds the next best active route with zero manual intervention.
+- **Dynamic 2GB Chunking**: The engine instantly detects local API hosts and auto-upgrades the chunking payload limit from 50MB to a massive 2GB, alongside memory-preserving dynamic buffer allocation that slashes GC overhead.
 - **Smart Diffing Engine**: Natively maps existing file chunks remotely. If a file exists globally or has already been transferred to your exact destination, it physically bypasses the upload step and logically links the index instead.
 - **AES-256-GCM Encryption**: Secure sensitive directories seamlessly. Flag `--encrypt` physically encrypts payload byte streams on your CPU before they are ever attached to a Telegram API payload.
 - **Dynamic Media Routing (Music/Video UI)**: Use the `--media` tag for your unencrypted payload files (like `.mp3` or `.flac`) and the engine will intuitively bind memory-resident ID3 Album Art and title strings directly into the push. This transforms your Telegram Channel instantly into a natively streaming Spotify-clone with track metadata, entirely without external logic layers.

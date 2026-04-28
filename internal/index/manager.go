@@ -89,24 +89,26 @@ func (m *Manager) Load() (*models.Index, error) {
 	data, err := os.ReadFile(m.localCache)
 	if err != nil {
 		// return empty index if not exists
-		return &models.Index{Version: 1, Files: make(map[string]*models.FileEntry)}, nil
+		return &models.Index{Version: 1, Targets: make(map[string]map[string]*models.FileEntry)}, nil
 	}
 	var idx models.Index
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, err
 	}
-	if idx.Files == nil {
-		idx.Files = make(map[string]*models.FileEntry)
+	if idx.Targets == nil {
+		idx.Targets = make(map[string]map[string]*models.FileEntry)
 	}
 	return &idx, nil
 }
 
 // GlobalDedupeCheck checks if a chunk hash exists locally to avoid upload
 func (m *Manager) GlobalDedupeCheck(idx *models.Index, hash string) (string, bool) {
-	for _, f := range idx.Files {
-		for _, c := range f.Chunks {
-			if c.Hash == hash && c.TGFileID != "" {
-				return c.TGFileID, true
+	for _, targetScope := range idx.Targets {
+		for _, f := range targetScope {
+			for _, c := range f.Chunks {
+				if c.Hash == hash && c.TGFileID != "" {
+					return c.TGFileID, true
+				}
 			}
 		}
 	}

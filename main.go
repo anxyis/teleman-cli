@@ -38,6 +38,17 @@ var configCmd = &cobra.Command{
 	},
 }
 
+var installCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Globally install teleman into the user system PATH",
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := core.RunInstall(); err != nil {
+			logger.Error("Install failed: %v", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var syncCmd = &cobra.Command{
 	Use:   "sync [source] [target_alias]:[path]",
 	Short: "Sync a source folder to a virtual target path",
@@ -87,6 +98,34 @@ var moveCmd = &cobra.Command{
 	},
 }
 
+var downloadCmd = &cobra.Command{
+	Use:   "download [target_alias]:[virtual_path] [local_dest]",
+	Short: "Download files from a virtual Telegram target to local disk",
+	Long: `Downloads files from your virtual Telegram filesystem to a local destination.
+Supports single file or recursive directory downloads with hash-verified chunk reassembly.
+
+Examples:
+  teleman download backup:photos/trip.jpg ./recovered/
+  teleman download remote:documents/ ./local_docs/
+  teleman download encrypted_vault:secrets/ ./decrypted/ --password mysecret`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		targetRaw := args[0]
+		localDest := args[1]
+		logger.Step("Starting Download:\n Source: %s\n Dest:   %s", targetRaw, localDest)
+
+		var password []byte
+		if downloadPassword != "" {
+			password = []byte(downloadPassword)
+		}
+
+		if err := core.RunDownload(targetRaw, localDest, password); err != nil {
+			logger.Error("Download Error: %v", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var lsCmd = &cobra.Command{
 	Use:   "ls [target_alias]:[path]",
 	Short: "List files on the virtual Telegram target",
@@ -105,7 +144,7 @@ var lsCmd = &cobra.Command{
 			logger.Error("Config error (run teleman config)")
 			os.Exit(1)
 		}
-		_, ok := cfg.Targets[alias]
+		target, ok := cfg.Targets[alias]
 		if !ok {
 			logger.Error("target alias '%s' not found", alias)
 			os.Exit(1)
@@ -124,15 +163,25 @@ var lsCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		targetKey := target.ChatID
+		if target.ThreadID != "" {
+			targetKey += ":" + target.ThreadID
+		}
+
 		logger.Info("Listing contents of: %s", targetRaw)
 		found := 0
 		virtualPrefix := strings.TrimLeft(virtualRoot, "/")
-		for vPath, entry := range idx.Files {
-			if virtualPrefix == "" || strings.HasPrefix(vPath, virtualPrefix) {
-				logger.Info("%10d %s", entry.Size, vPath)
-				found++
+
+		targetFiles, ok := idx.Targets[targetKey]
+		if ok {
+			for vPath, entry := range targetFiles {
+				if virtualPrefix == "" || strings.HasPrefix(vPath, virtualPrefix) {
+					logger.Info("%10d %s", entry.Size, vPath)
+					found++
+				}
 			}
 		}
+
 		if found == 0 {
 			logger.Info("(No files found)")
 		}
@@ -140,15 +189,16 @@ var lsCmd = &cobra.Command{
 }
 
 var (
-	transfers int
-	checkers  int
-	chunkSize string
-	encrypt   bool
-	zipMode   bool
-	mediaMode bool
-	force     bool
-	verbose   bool
-	quiet     bool
+	transfers        int
+	checkers         int
+	chunkSize        string
+	encrypt          bool
+	zipMode          bool
+	mediaMode        bool
+	force            bool
+	verbose          bool
+	quiet            bool
+	downloadPassword string
 )
 
 func addTransferFlags(cmd *cobra.Command) {
@@ -169,10 +219,14 @@ func init() {
 	addTransferFlags(copyCmd)
 	addTransferFlags(moveCmd)
 
+	downloadCmd.Flags().StringVar(&downloadPassword, "password", "", "Decryption password for encrypted chunks")
+
 	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(copyCmd)
 	rootCmd.AddCommand(moveCmd)
+	rootCmd.AddCommand(downloadCmd)
 	rootCmd.AddCommand(lsCmd)
 }
 

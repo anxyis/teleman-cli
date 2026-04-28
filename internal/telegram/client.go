@@ -308,6 +308,36 @@ func (c *Client) GetFile(fileID string) (string, error) {
 	return result.Result.FilePath, nil
 }
 
+// DownloadFileStream downloads a file directly from Telegram's API using its file_path
+func (c *Client) DownloadFileStream(filePath string) (io.ReadCloser, error) {
+	url := fmt.Sprintf("%s/file/bot%s/%s", c.APIHost, c.Token, filePath)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			c.handleRateLimit(resp)
+			resp.Body.Close()
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to download file, status code: %d", resp.StatusCode)
+		}
+
+		return resp.Body, nil
+	}
+	return nil, fmt.Errorf("max retries exceeded while downloading file stream")
+}
+
 // DeleteMessage deletes a message in a chat history
 func (c *Client) DeleteMessage(chatID string, messageID int64) error {
 	url := fmt.Sprintf("%s/bot%s/deleteMessage?chat_id=%s&message_id=%d", c.APIHost, c.Token, chatID, messageID)

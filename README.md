@@ -74,3 +74,16 @@ teleman copy ./SecretData remote:/ -e -t 16 -c 32 -v
 
 Teleman heavily utilizes a **Stateless Index Architecture**.
 The true "file mapping" dictating how all data chunks piece back into original target streams is completely encapsulated in a static `.json` configuration file, which maintains a living history natively preserved onto a pinned channel string message state stream on Telegram. Your destination channel works strictly as BLOB storage.
+
+---
+
+## 📖 Documentation
+
+| Document | Description |
+|---|---|
+| **[Command Guide](docs/command-guide.md)** | 📘 Full scenario-driven guide with copy-pasteable examples for every command, performance tuning, encryption, media mode, and common recipes |
+| [Usage Reference](docs/usage.md) | Quick command overview and flag reference |
+| [Architecture](docs/architecture.md) | Internals: index design, chunking pipeline, download reassembly, and namespaced isolation |
+
+> **New here?** Start with the **[Command Guide](docs/command-guide.md)** — it covers everything from first-time setup to advanced multi-threaded encrypted backups with real examples for every scenario.
+

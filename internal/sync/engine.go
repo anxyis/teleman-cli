@@ -13,7 +13,6 @@ import (
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/telegram"
-	"sync"
 	"sync/atomic"
 )
 
@@ -79,6 +78,14 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 		return fmt.Errorf("failed to load index: %v", err)
 	}
 
+	targetKey := target.ChatID
+	if target.ThreadID != "" {
+		targetKey += ":" + target.ThreadID
+	}
+	if idx.Targets[targetKey] == nil {
+		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+	}
+
 	// 1. Gather files
 	var localFiles []fileTask
 	info, err := os.Stat(source)
@@ -108,7 +115,6 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 		})
 	}
 
-	localFiles := localFiles // shadow for clarity
 	logger.Step("=> Diffing %d local files against virtual index (Checkers: %d)...", len(localFiles), s.optCheckers)
 
 	// 2. Diffing Pipeline (Checkers)
@@ -125,7 +131,7 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 			for task := range tasksChan {
 				needsUpload := true
 				if !s.optForce {
-					if existing, ok := idx.Files[task.VirtualPath]; ok {
+					if existing, ok := idx.Targets[targetKey][task.VirtualPath]; ok {
 						if existing.Size == task.FileInfo.Size() && existing.ModTime == task.FileInfo.ModTime().Unix() {
 							needsUpload = false
 							skipped.Add(1)
@@ -193,7 +199,7 @@ func (s *SyncEngine) Run(source, targetRaw string) error {
 
 				// Thread-safe index update
 				idxMutex.Lock()
-				idx.Files[task.VirtualPath] = &models.FileEntry{
+				idx.Targets[targetKey][task.VirtualPath] = &models.FileEntry{
 					Size:    task.FileInfo.Size(),
 					ModTime: task.FileInfo.ModTime().Unix(),
 					Chunks:  chunks,

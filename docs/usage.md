@@ -47,6 +47,25 @@ teleman copy document.pdf backup_channel:
 teleman copy ./Movies/ my_alias:media/videos/
 ```
 
+### Download Files
+Pulls files from the virtual Telegram filesystem back to your local disk. Chunks are downloaded, hash-verified (SHA-256), optionally decrypted, and streamed to disk in order.
+```bash
+# Download a single file
+teleman download backup:photos/trip.jpg ./recovered/
+
+# Download an entire virtual directory
+teleman download remote:documents/ ./local_docs/
+
+# Download encrypted files (provide the same password used during upload)
+teleman download encrypted_vault:secrets/ ./decrypted/ --password mysecret
+```
+
+**Path Safety:** Teleman uses strict path segment matching — downloading `media` will never accidentally pull files from `media_test/`. Only exact segment boundaries are matched.
+
+**Corruption Protection:** Every downloaded chunk is hash-verified against the index before being written. If any chunk fails verification, the entire download aborts immediately to prevent data corruption.
+
+**Atomic Writes:** Files are written to a `.partial` temp file first, then atomically renamed on success. This ensures no half-written files exist in the output directory.
+
 ### Move Files
 Identical to `copy`, but actively deletes the source data from your local drive once the file map has been successfully recorded in Telegram.
 ```bash
@@ -73,6 +92,8 @@ Teleman natively utilizes all logical CPU cores available to it. You can tightly
   - `--media`: Opt-in mapping that natively inspects single-chunk unencrypted files. Discovers media models (`.jpg`, `.mp4`, `.mp3`) and organically routes the byte-stream against Telegram's rich media `/sendAudio` protocols. Leverages pure-Go native tag-extraction to bind ID3 Metadata (Album cover/Artist strings) natively bypassing raw blobs entirely! Fallbacks safely to standard logic if the format breaks or metadata resolves corrupted.
 - **Sync Overrides**:
   - `--force` (`-f`): Bypasses the active index diffing engine. Explicitly forces an immediate network push of your byte chunk, ripping and overwriting destination chunk indices even if matching records indicate zero byte variation.
+- **Download**:
+  - `--password`: Supply the AES-256 decryption password for chunks that were uploaded with `--encrypt`. Required only when downloading encrypted files.
 - **Output Control**:
   - `--verbose` (`-v`): Unlocks maximal debug and index chunk inspection data.
   - `--quiet` (`-q`): Completely suppresses the terminal to silent mode. Output isolated strictly to fatal crashes.

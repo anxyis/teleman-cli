@@ -3,8 +3,8 @@ package models
 // Index is the root structure for the teleman.index.json
 // It acts as the single source of truth for the virtual filesystem.
 type Index struct {
-	Version int                   `json:"version"`
-	Files   map[string]*FileEntry `json:"files"` // Key is the virtual path, e.g., "photos/trip.jpg"
+	Version int                                      `json:"version"`
+	Targets map[string]map[string]*FileEntry `json:"targets"` 
 }
 
 // FileEntry represents a file in the virtual filesystem.

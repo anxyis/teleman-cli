@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/dhowden/tag"
@@ -166,6 +167,72 @@ func HashChunk(data []byte) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+// ReassembleStream downloads chunks from Telegram and writes them sequentially to dst.
+// Pipeline order: download → hash verify → decrypt (if needed) → write.
+// Chunks are explicitly sorted by offset before reassembly.
+// A hash mismatch aborts immediately with a non-nil error.
+func (e *Engine) ReassembleStream(chunks []*models.ChunkEntry, dst io.Writer, password []byte) error {
+	if len(chunks) == 0 {
+		return fmt.Errorf("no chunks to reassemble")
+	}
+
+	// 1. Sort chunks by offset to guarantee correct byte order
+	sorted := make([]*models.ChunkEntry, len(chunks))
+	copy(sorted, chunks)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Offset < sorted[j].Offset
+	})
+
+	for i, chunk := range sorted {
+		// 2. Resolve Telegram file path from file_id
+		filePath, err := e.client.GetFile(chunk.TGFileID)
+		if err != nil {
+			return fmt.Errorf("chunk %d/%d: failed to resolve file_id %s: %v", i+1, len(sorted), chunk.TGFileID, err)
+		}
+
+		// 3. Download the raw chunk stream
+		stream, err := e.client.DownloadFileStream(filePath)
+		if err != nil {
+			return fmt.Errorf("chunk %d/%d: download failed: %v", i+1, len(sorted), err)
+		}
+
+		// Read chunk bytes (we need the full chunk in memory for hash verification)
+		// This is bounded by ChunkSize (typically 49MB), not the entire file.
+		chunkData, err := io.ReadAll(stream)
+		stream.Close()
+		if err != nil {
+			return fmt.Errorf("chunk %d/%d: failed to read stream: %v", i+1, len(sorted), err)
+		}
+
+		// 4. Strict hash verification BEFORE any decryption
+		// The hash was computed on the encrypted bytes during upload,
+		// so we verify against the raw downloaded bytes.
+		computedHash := HashChunk(chunkData)
+		if computedHash != chunk.Hash {
+			return fmt.Errorf("chunk %d/%d: HASH MISMATCH (expected %s, got %s) — aborting download to prevent data corruption", i+1, len(sorted), chunk.Hash, computedHash)
+		}
+
+		// 5. Decrypt if the chunk was encrypted during upload
+		if chunk.Encrypted {
+			if len(password) == 0 {
+				return fmt.Errorf("chunk %d/%d: chunk is encrypted but no password was provided", i+1, len(sorted))
+			}
+			decrypted, err := decryptAES(chunkData, password)
+			if err != nil {
+				return fmt.Errorf("chunk %d/%d: decryption failed: %v", i+1, len(sorted), err)
+			}
+			chunkData = decrypted
+		}
+
+		// 6. Stream to destination writer
+		if _, err := dst.Write(chunkData); err != nil {
+			return fmt.Errorf("chunk %d/%d: write to disk failed: %v", i+1, len(sorted), err)
+		}
+	}
+
+	return nil
+}
+
 // encryptAES encrypts data using AES-GCM
 func encryptAES(plaintext []byte, key []byte) ([]byte, error) {
 	// Pad key to 32 bytes for AES-256
@@ -188,4 +255,29 @@ func encryptAES(plaintext []byte, key []byte) ([]byte, error) {
 	}
 
 	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// decryptAES decrypts data that was encrypted with encryptAES (AES-256-GCM).
+// The nonce is prepended to the ciphertext by the encrypt function.
+func decryptAES(ciphertext []byte, key []byte) ([]byte, error) {
+	paddedKey := make([]byte, 32)
+	copy(paddedKey, key)
+
+	block, err := aes.NewCipher(paddedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short to contain nonce")
+	}
+
+	nonce, sealed := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	return gcm.Open(nil, nonce, sealed, nil)
 }

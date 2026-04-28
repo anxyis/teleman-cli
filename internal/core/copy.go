@@ -69,6 +69,14 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 		return fmt.Errorf("failed to load index: %v", err)
 	}
 
+	targetKey := target.ChatID
+	if target.ThreadID != "" {
+		targetKey += ":" + target.ThreadID
+	}
+	if idx.Targets[targetKey] == nil {
+		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+	}
+
 	// Validate source
 	info, err := os.Stat(source)
 	if err != nil {
@@ -93,7 +101,7 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 		}
 
 		// Calculate simulated size and time from directory
-		idx.Files[vPath] = &models.FileEntry{
+		idx.Targets[targetKey][vPath] = &models.FileEntry{
 			Size:    0, // Stream size isn't known until EOF, handled by chunks size sum
 			ModTime: info.ModTime().Unix(),
 			Chunks:  chunks,
@@ -104,7 +112,7 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 		for _, c := range chunks {
 			totalSize += c.Size
 		}
-		idx.Files[vPath].Size = totalSize
+		idx.Targets[targetKey][vPath].Size = totalSize
 
 		idx.Version++
 		logger.Success("      Success! %d chunks uploaded (%d bytes)", len(chunks), totalSize)
@@ -137,7 +145,7 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 
 			fileInfo, _ := os.Stat(localPath)
 			if !force {
-				if existing, ok := idx.Files[vPath]; ok {
+				if existing, ok := idx.Targets[targetKey][vPath]; ok {
 					if existing.Size == fileInfo.Size() && existing.ModTime == fileInfo.ModTime().Unix() {
 						logger.Debug("   [Skipped] %s (Unchanged)", vPath)
 						skipped++
@@ -163,7 +171,7 @@ func RunCopy(source, targetRaw string, zipMode, mediaMode, force bool) error {
 				continue
 			}
 
-			idx.Files[vPath] = &models.FileEntry{
+			idx.Targets[targetKey][vPath] = &models.FileEntry{
 				Size:    fileInfo.Size(),
 				ModTime: fileInfo.ModTime().Unix(),
 				Chunks:  chunks,

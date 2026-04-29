@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/dhowden/tag"
 	"github.com/teleman-cli/teleman/internal/logger"
@@ -62,16 +63,38 @@ func NewEngineWithSize(client *telegram.Client, mediaMode bool, chunkSize int64)
 
 // ProcessStream chunks an io.Reader and uploads parts to telegram
 // returning the list of ChunkEntries to store in the Index.
-func (e *Engine) ProcessStream(chatID, threadID, filename string, r io.Reader, password []byte) ([]*models.ChunkEntry, error) {
-	return e.ProcessStreamCtx(context.Background(), chatID, threadID, filename, r, password)
+func (e *Engine) ProcessStream(chatID, threadID, filename string, r io.Reader, password []byte, caption string) ([]*models.ChunkEntry, error) {
+	return e.ProcessStreamCtx(context.Background(), chatID, threadID, filename, r, password, caption)
+}
+
+// formatSize converts bytes into a short, readable format (e.g. 15.2 MB)
+func formatSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 // ProcessStreamCtx chunks an io.Reader and uploads parts to telegram with context support.
 // Returns the list of ChunkEntries to store in the Index.
 // Respects context cancellation between chunk uploads for graceful shutdown.
-func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filename string, r io.Reader, password []byte) ([]*models.ChunkEntry, error) {
+func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filename string, r io.Reader, password []byte, captionOpt string) ([]*models.ChunkEntry, error) {
 	var chunks []*models.ChunkEntry
 	var offset int64
+
+	// Determine total size if possible (used for caption)
+	var totalSize int64 = -1
+	if f, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
+		if stat, err := f.Stat(); err == nil {
+			totalSize = stat.Size()
+		}
+	}
 
 	for {
 		// Check for cancellation before reading the next chunk
@@ -146,6 +169,29 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 		if nBytes > 0 {
 			var isEncrypted bool
 			var dataToUpload []byte
+
+			// Determine caption for the first chunk only
+			var currentCaption string
+			if len(chunks) == 0 && captionOpt != "" {
+				if captionOpt == "auto" {
+					parts := []string{filename}
+					if totalSize >= 0 {
+						parts = append(parts, formatSize(totalSize))
+					}
+					parts = append(parts, time.Now().Format("2006-01-02"))
+
+					ext := strings.ToLower(filepath.Ext(filename))
+					if ext != "" {
+						// Remove dot and prepend hashtag
+						parts = append(parts, "#"+ext[1:])
+					}
+
+					currentCaption = strings.Join(parts, "\n")
+				} else {
+					currentCaption = captionOpt
+				}
+			}
+
 			if len(password) > 0 {
 				encryptedData, encErr := encryptAES(chunkData, password)
 				if encErr != nil {
@@ -230,14 +276,14 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 						} else if method == "sendVideo" {
 							logger.Debug("      [Media] %s → sendVideo", filename)
 						}
-						fileID, msgID, upErr = e.client.SendMediaCtx(ctx, chatID, threadID, chunkName, chunkReader, method, fieldName, params, thumbData)
+						fileID, msgID, upErr = e.client.SendMediaCtx(ctx, chatID, threadID, chunkName, chunkReader, method, fieldName, params, thumbData, currentCaption)
 					} else {
-						fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader)
+						fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader, currentCaption)
 					}
 				} else {
 					// Extension not in any media category
 					logger.Debug("      [Media] %s → sendDocument (unsupported extension for media routing)", filename)
-					fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader)
+					fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader, currentCaption)
 				}
 			} else {
 				// Not eligible for media endpoint
@@ -248,7 +294,7 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 						logger.Debug("      [Media] %s → sendDocument (multi-part chunk — too large for media endpoint)", filename)
 					}
 				}
-				fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader)
+				fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader, currentCaption)
 			}
 
 			if upErr != nil {

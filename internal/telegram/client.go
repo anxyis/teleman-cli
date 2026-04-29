@@ -192,12 +192,12 @@ func (c *Client) GetMeCtx(ctx context.Context) (map[string]interface{}, error) {
 }
 
 // SendDocument uploads a chunk stream as a document to Telegram.
-func (c *Client) SendDocument(chatID string, threadID string, filename string, r io.Reader) (string, int64, error) {
-	return c.SendDocumentCtx(context.Background(), chatID, threadID, filename, r)
+func (c *Client) SendDocument(chatID string, threadID string, filename string, r io.Reader, caption string) (string, int64, error) {
+	return c.SendDocumentCtx(context.Background(), chatID, threadID, filename, r, caption)
 }
 
 // SendDocumentCtx uploads a chunk stream as a document to Telegram with context support for cancellation.
-func (c *Client) SendDocumentCtx(ctx context.Context, chatID string, threadID string, filename string, r io.Reader) (string, int64, error) {
+func (c *Client) SendDocumentCtx(ctx context.Context, chatID string, threadID string, filename string, r io.Reader, caption string) (string, int64, error) {
 	url := fmt.Sprintf("%s/bot%s/sendDocument", c.APIHost, c.Token)
 
 	pr, pw := io.Pipe()
@@ -208,6 +208,9 @@ func (c *Client) SendDocumentCtx(ctx context.Context, chatID string, threadID st
 		writer.WriteField("chat_id", chatID)
 		if threadID != "" {
 			writer.WriteField("message_thread_id", threadID)
+		}
+		if caption != "" {
+			writer.WriteField("caption", caption)
 		}
 
 		// Force Telegram to treat this as a pure raw file, not rich media
@@ -272,12 +275,12 @@ func (c *Client) SendDocumentCtx(ctx context.Context, chatID string, threadID st
 }
 
 // SendMedia uploads a stream using a specific media endpoint (sendPhoto, sendVideo, sendAudio).
-func (c *Client) SendMedia(chatID string, threadID string, filename string, r io.Reader, method string, fieldName string, params map[string]string, thumbData []byte) (string, int64, error) {
-	return c.SendMediaCtx(context.Background(), chatID, threadID, filename, r, method, fieldName, params, thumbData)
+func (c *Client) SendMedia(chatID string, threadID string, filename string, r io.Reader, method string, fieldName string, params map[string]string, thumbData []byte, caption string) (string, int64, error) {
+	return c.SendMediaCtx(context.Background(), chatID, threadID, filename, r, method, fieldName, params, thumbData, caption)
 }
 
 // SendMediaCtx uploads a stream using a specific media endpoint with context support.
-func (c *Client) SendMediaCtx(ctx context.Context, chatID string, threadID string, filename string, r io.Reader, method string, fieldName string, params map[string]string, thumbData []byte) (string, int64, error) {
+func (c *Client) SendMediaCtx(ctx context.Context, chatID string, threadID string, filename string, r io.Reader, method string, fieldName string, params map[string]string, thumbData []byte, caption string) (string, int64, error) {
 	url := fmt.Sprintf("%s/bot%s/%s", c.APIHost, c.Token, method)
 
 	pr, pw := io.Pipe()
@@ -288,6 +291,9 @@ func (c *Client) SendMediaCtx(ctx context.Context, chatID string, threadID strin
 		writer.WriteField("chat_id", chatID)
 		if threadID != "" {
 			writer.WriteField("message_thread_id", threadID)
+		}
+		if caption != "" {
+			writer.WriteField("caption", caption)
 		}
 
 		if params != nil {

@@ -169,7 +169,7 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			continue
 		}
 
-		chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.VPath), f, opts.Password)
+		chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.VPath), f, opts.Password, opts.Caption)
 		f.Close()
 		if err != nil {
 			logger.Error("      Upload Failed: %v", err)

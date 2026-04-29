@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -226,6 +227,202 @@ var lsCmd = &cobra.Command{
 	},
 }
 
+var sizeCmd = &cobra.Command{
+	Use:   "size [target_alias]:[path]",
+	Short: "Display total number of files and total size for a given virtual path",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		targetRaw := args[0]
+		parts := strings.SplitN(targetRaw, ":", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid target format. Use alias:virtual/path")
+		}
+		alias, virtualRoot := parts[0], parts[1]
+
+		cfg, err := config.Load()
+		if err != nil || cfg.ActiveToken == "" {
+			return fmt.Errorf("config error (run teleman config)")
+		}
+		target, ok := cfg.Targets[alias]
+		if !ok {
+			return fmt.Errorf("target alias '%s' not found", alias)
+		}
+
+		// Initialize manager with nil client to avoid API calls completely
+		mgr, err := index.NewManager(nil, "")
+		if err != nil {
+			return fmt.Errorf("index init error: %v", err)
+		}
+
+		idx, err := mgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load index: %v", err)
+		}
+
+		targetKey := target.ChatID
+		if target.ThreadID != "" {
+			targetKey += ":" + target.ThreadID
+		}
+
+		virtualPrefix := strings.TrimLeft(virtualRoot, "/")
+
+		var totalFiles int
+		var totalSize int64
+
+		targetFiles, ok := idx.Targets[targetKey]
+		if ok {
+			for vPath, entry := range targetFiles {
+				if virtualPrefix == "" || strings.HasPrefix(vPath, virtualPrefix) {
+					totalFiles++
+					totalSize += entry.Size
+				}
+			}
+		}
+
+		if totalFiles == 0 {
+			fmt.Println("No files found")
+			return nil
+		}
+
+		fmt.Printf("Total Files: %d\n", totalFiles)
+		fmt.Printf("Total Size: %s (%d bytes)\n", formatBytes(totalSize), totalSize)
+		return nil
+	},
+}
+
+var treeDepth int
+
+type treeNode struct {
+	name     string
+	isDir    bool
+	children map[string]*treeNode
+}
+
+func newTreeNode(name string, isDir bool) *treeNode {
+	return &treeNode{
+		name:     name,
+		isDir:    isDir,
+		children: make(map[string]*treeNode),
+	}
+}
+
+func insertPath(root *treeNode, path string) {
+	parts := strings.Split(path, "/")
+	current := root
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		isDir := i < len(parts)-1
+		if _, exists := current.children[part]; !exists {
+			current.children[part] = newTreeNode(part, isDir)
+		}
+		current = current.children[part]
+	}
+}
+
+func printTree(node *treeNode, indent string, currentDepth, maxDepth int) {
+	if maxDepth > 0 && currentDepth >= maxDepth {
+		return
+	}
+
+	var dirs []*treeNode
+	var files []*treeNode
+
+	for _, child := range node.children {
+		if child.isDir {
+			dirs = append(dirs, child)
+		} else {
+			files = append(files, child)
+		}
+	}
+
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].name < dirs[j].name })
+	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
+
+	for _, d := range dirs {
+		fmt.Printf("%s%s/\n", indent, d.name)
+		printTree(d, indent+"  ", currentDepth+1, maxDepth)
+	}
+	for _, f := range files {
+		fmt.Printf("%s%s\n", indent, f.name)
+	}
+}
+
+var treeCmd = &cobra.Command{
+	Use:   "tree [target_alias]:[path]",
+	Short: "Display the virtual filesystem structure in a tree-like format",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		targetRaw := args[0]
+		parts := strings.SplitN(targetRaw, ":", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid target format. Use alias:virtual/path")
+		}
+		alias, virtualRoot := parts[0], parts[1]
+
+		cfg, err := config.Load()
+		if err != nil || cfg.ActiveToken == "" {
+			return fmt.Errorf("config error (run teleman config)")
+		}
+		target, ok := cfg.Targets[alias]
+		if !ok {
+			return fmt.Errorf("target alias '%s' not found", alias)
+		}
+
+		mgr, err := index.NewManager(nil, "")
+		if err != nil {
+			return fmt.Errorf("index init error: %v", err)
+		}
+
+		idx, err := mgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load index: %v", err)
+		}
+
+		targetKey := target.ChatID
+		if target.ThreadID != "" {
+			targetKey += ":" + target.ThreadID
+		}
+
+		virtualPrefix := strings.TrimLeft(virtualRoot, "/")
+
+		root := newTreeNode("", true)
+		found := 0
+
+		targetFiles, ok := idx.Targets[targetKey]
+		if ok {
+			for vPath := range targetFiles {
+				if virtualPrefix == "" || strings.HasPrefix(vPath, virtualPrefix) {
+					insertPath(root, vPath)
+					found++
+				}
+			}
+		}
+
+		if found == 0 {
+			fmt.Println("No files found")
+			return nil
+		}
+
+		printTree(root, "", 0, treeDepth)
+		return nil
+	},
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 var deleteCmd = &cobra.Command{
 	Use:   "delete [target_alias]:[path]",
 	Short: "Delete files under a target path without removing subdirectories",
@@ -396,8 +593,12 @@ func init() {
 	rootCmd.AddCommand(moveCmd)
 	rootCmd.AddCommand(downloadCmd)
 	rootCmd.AddCommand(lsCmd)
+	rootCmd.AddCommand(sizeCmd)
+	rootCmd.AddCommand(treeCmd)
 	rootCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(purgeCmd)
+
+	treeCmd.Flags().IntVar(&treeDepth, "depth", 0, "Maximum depth to display (0 for unlimited)")
 
 	deleteCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be deleted without making changes")
 	deleteCmd.Flags().IntVarP(&transfers, "transfers", "t", 4, "Number of parallel physical deletion workers")

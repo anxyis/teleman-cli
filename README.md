@@ -12,10 +12,14 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
 - **Painless Storage Scaling**: By capitalizing on Telegram’s limitless native cloud architecture, you can backup massive local datasets completely free.
 - **Smart IP Routing**: Automatically probes and falls back between Local, Tailscale, and Public endpoints. If you leave your home network, the CLI seamlessly finds the next best active route with zero manual intervention.
 - **Dynamic 2GB Chunking**: The engine instantly detects local API hosts and auto-upgrades the chunking payload limit from 50MB to a massive 2GB, alongside memory-preserving dynamic buffer allocation that slashes GC overhead.
-- **Smart Diffing Engine**: Natively maps existing file chunks remotely. If a file exists globally or has already been transferred to your exact destination, it physically bypasses the upload step and logically links the index instead.
-- **AES-256-GCM Encryption**: Secure sensitive directories seamlessly. Flag `--encrypt` physically encrypts payload byte streams on your CPU before they are ever attached to a Telegram API payload.
+- **AES-256-GCM Security (TLM1)**: Secure sensitive directories seamlessly. Every chunk uses a unique, random cryptographically secure salt to prevent key-reuse vulnerabilities. Backward compatibility with legacy encrypted files is natively maintained.
+- **Streaming Reassembly (OOM Protected)**: The reassembly engine streams downloads directly to disk, avoiding high RAM usage. This prevents crashes when handling massive files or large chunk sizes.
+- **Buffer Pooling**: Implements `sync.Pool` logic to recycle memory buffers, slashing GC overhead and improving throughput during concurrent operations.
 - **Dynamic Media Routing (Music/Video UI)**: Use the `--media` tag for your unencrypted payload files (like `.mp3` or `.flac`) and the engine will intuitively bind memory-resident ID3 Album Art and title strings directly into the push. This transforms your Telegram Channel instantly into a natively streaming Spotify-clone with track metadata, entirely without external logic layers.
 - **On-the-Fly Archiving**: Streaming an entire web-project tree using `--zip` will stream a completely logical `.zip` directly into Telegram without wasting local I/O writing an intermediate archive onto disk.
+- **Custom Telegram Captions**: Add custom strings or automatic metadata (name, size, date) to your file messages via `--caption auto`.
+- **Dynamic Progress Monitoring**: Real-time progress bars for all transfers (`copy`, `move`, `sync`, `download`) showing per-file speeds, ETAs, and overall job completion status.
+
 
 ---
 
@@ -25,7 +29,7 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
    ```bash
    git clone git@github.com:anxyis/teleman-cli.git
    cd teleman-cli
-   go build -o teleman.exe main.go
+   go build -o teleman.exe .
    ```
 
 2. **Run Initialization**
@@ -53,7 +57,14 @@ teleman sync ./LocalProjects cloud:/dev_backups/
 
 ### Inspecting Virtual Drive
 ```bash
+# List all files
 teleman ls cloud:/
+
+# View total file count and size
+teleman size cloud:/
+
+# Display nested directory tree
+teleman tree cloud:/
 ```
 
 ### Advanced Power-User Flags

@@ -11,6 +11,8 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
 1. [Initial Setup](#1-initial-setup)
 2. [Understanding the Target Format](#2-understanding-the-target-format)
 3. [Listing Your Virtual Drive (`ls`)](#3-listing-your-virtual-drive-ls)
+   - [Checking Directory Size (`size`)](#checking-directory-size-size)
+   - [Viewing Directory Tree (`tree`)](#viewing-directory-tree-tree)
 4. [Copying Files (`copy`)](#4-copying-files-copy)
    - [Single Files](#single-files)
    - [Whole Directories](#whole-directories)
@@ -97,6 +99,33 @@ teleman ls remote:projects/web/assets/
 teleman ls remote: -v
 ```
 
+### Checking Directory Size (`size`)
+
+To get a quick summary of total files and total size for a given path without listing every file (and without querying the Telegram API):
+
+```bash
+# Check size of the entire target root
+teleman size backup:
+
+# Check size of a specific virtual folder
+teleman size remote:projects/web/assets/
+```
+
+### Viewing Directory Tree (`tree`)
+
+To display your virtual filesystem structure in a nested, visual format:
+
+```bash
+# View the tree for an entire target
+teleman tree backup:
+
+# View the tree for a specific folder
+teleman tree remote:media/
+
+# Limit the depth of the tree to top-level folders
+teleman tree nas: --depth 1
+```
+
 ---
 
 ## 4. Copying Files (`copy`)
@@ -131,7 +160,7 @@ teleman copy ./my-project/ nas:dev/my-project/
 
 ### Encrypted Uploads
 
-All chunks are AES-256-GCM encrypted on your CPU **before** hitting the network. Keys are derived from your passphrase using **scrypt** (memory-hard KDF). You need the same passphrase when downloading.
+All chunks are AES-256-GCM encrypted on your CPU **before** hitting the network. Teleman uses a cryptographically secure **random salt** for every chunk (stored in the new `TLM1` format) to prevent key-reuse vulnerabilities. Keys are derived from your passphrase using **scrypt** (memory-hard KDF). Backward compatibility with older deterministic-salt files is maintained.
 
 ```bash
 # Encrypt using environment variable (recommended)
@@ -177,6 +206,21 @@ teleman copy ./Music/DaftPunk-RAM/ music_backup:albums/ --media
 
 # Upload video files with native Telegram video player support
 teleman copy ./Videos/Clips/ channel:videos/ --media
+```
+
+### Custom Captions
+
+Add metadata or custom notes to your Telegram messages. Captions are only added to the first chunk of each file to avoid channel clutter.
+
+```bash
+# Automatically generate metadata (Filename, Size, Date, #Ext)
+teleman copy ./Project/ backup: --caption auto
+
+# Add a custom note
+teleman copy ./Secrets.zip vault: --caption "Confidential Backup 2025"
+
+# Works with sync and move too
+teleman sync ./Docs/ remote: --caption auto
 ```
 
 ### Dry Run (Preview Changes)
@@ -245,7 +289,7 @@ teleman move ./Temp/ remote:archive/ --dry-run
 
 ## 7. Downloading Files (`download`)
 
-`download` is the inverse of `copy`. It fetches chunks from Telegram, verifies each chunk's SHA-256 hash, optionally decrypts, and writes to disk atomically.
+`download` is the inverse of `copy`. It fetches chunks from Telegram, verifies each chunk's SHA-256 hash, optionally decrypts, and writes to disk atomically. The engine uses a streaming reassembly pipeline that saves chunks directly to temporary files on disk, ensuring memory safety even when handling massive chunks or high concurrency.
 
 ### Single File Download
 
@@ -352,7 +396,7 @@ Teleman uses a custom `http.Transport` initialized with a massive `100` MaxIdleC
 
 If you're running [Telegram's Local Bot API Server](https://github.com/tdlib/telegram-bot-api), Teleman is designed to instantly detect it.
 
-> **Auto-Upgrade Logic**: If Teleman detects you are routed through a non-public endpoint (like your Local or Tailscale IP), it **automatically upgrades your Chunk Size limit from 49MB to 2GB**. It will also seamlessly pre-allocate memory chunks precisely to file sizes, preserving your RAM.
+> **Auto-Upgrade Logic**: If Teleman detects you are routed through a non-public endpoint (like your Local or Tailscale IP), it **automatically upgrades your Chunk Size limit from 49MB to 2GB**. It leverages an optimized reassembly engine with `sync.Pool` buffer recycling and direct-to-disk streaming to handle these massive payloads without exceeding your device's RAM.
 
 ```bash
 # Max throughput on local API: 16 upload threads, 32 checkers
@@ -398,18 +442,25 @@ teleman sync ./TestData/ remote:test/ --encrypt -t 8 -c 16 -v
 
 ---
 
-## 9. Output Control
+## 9. Output Control & UI
+
+Teleman features a professional, high-performance console UI designed for clear feedback during massive operations.
+
+### Dynamic Progress Bars (Interactive Mode)
+When running in an interactive terminal (TTY), Teleman automatically activates dynamic progress bars for `copy`, `move`, `sync`, and `download`.
+
+- **Overall Progress**: Displays the count of files processed vs. total files found (e.g., `Syncing: [4 / 12 files]`).
+- **Live Worker Status**: Every active transfer worker (set by `-t`) has a dedicated bar showing its current filename, speed (MB/s), and ETA.
+- **Auto-Cleanup**: Bars for finished files are automatically cleared to keep the terminal clean.
+
+### Plain-Text Logs (Non-Interactive/CI Mode)
+If Teleman detects it is running in a script, cron job, or a non-TTY environment, it automatically switches to a clean, line-by-line logging format.
 
 ```bash
 # Verbose mode: shows every pipeline step, index decisions, chunk hashes
 teleman copy ./data/ remote: -v
 
 # Quiet mode: no output at all (only fatal errors go to stderr)
-teleman sync ./data/ remote: -q
-
-# Combine with other flags
-teleman copy ./bigfile.iso backup: -t 8 -q
-
 # Perfect for cron jobs — silent unless something breaks
 teleman sync /home/user/Documents backup:docs/ -t 4 -c 8 -q
 ```
@@ -482,6 +533,7 @@ teleman download backup:projects/my-app/ ./restored/
 | `--zip` | — | `false` | Stream source directory as a `.zip` archive |
 | `--tgz` | — | `false` | Stream source directory as a `.tar.gz` archive |
 | `--media` | — | `false` | Route audio/video/image via Telegram's native media APIs |
+| `--caption` | — | `""` | Add a caption to the first chunk (`auto` for metadata or custom string) |
 | `--force` | `-f` | `false` | Skip index diff — re-upload everything unconditionally |
 | `--dry-run` | — | `false` | Preview what would be transferred without making changes |
 | `--password` | — | `""` | Encryption password (prefer `TELEMAN_PASSWORD` env var) |

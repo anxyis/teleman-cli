@@ -23,8 +23,10 @@ The hash is computed on the **encrypted** bytes. This means:
 Teleman uses **scrypt** (N=32768, r=8, p=1) to derive a 32-byte AES-256 key from your passphrase. This provides:
 
 - **Brute-force resistance**: scrypt is memory-hard, making GPU attacks expensive
-- **Deterministic keys**: The same passphrase always produces the same key (using a SHA-256-derived salt)
-- **No external key storage**: You don't need to manage key files — your passphrase _is_ the key
+- **Unique Per-Chunk Salts**: New files use a cryptographically secure random 16-byte salt for every chunk. This prevents AES-GCM key-reuse and nonce-exhaustion vulnerabilities.
+- **Magic Header (TLM1)**: Encrypted files now include a `TLM1` magic header, salt, and nonce prepended to the ciphertext.
+- **Backward Compatibility**: Teleman automatically detects legacy files (using deterministic salts) and handles them seamlessly.
+- **No external key storage**: You don't need to manage key files — your passphrase _is_ the key.
 
 > ⚠️ **Important:** If you lose your passphrase, your data is unrecoverable. There is no master key or recovery mechanism.
 

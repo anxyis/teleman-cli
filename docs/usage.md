@@ -30,11 +30,19 @@ If you want Teleman to back up directly to a specific user, that user **must** m
 
 ## 2. Basic Commands
 
-### List Files
-Lists the content of your virtual filesystem map inside the target alias.
+### List Files (`ls`, `size`, `tree`)
+Lists and inspects the content of your virtual filesystem map inside the target alias.
 ```bash
+# Basic listing
 teleman ls my_alias:
 teleman ls my_alias:photos/trip/
+
+# Quick summary of total files and size (offline)
+teleman size my_alias:photos/
+
+# Visual tree structure (offline)
+teleman tree my_alias:
+teleman tree my_alias: --depth 2
 ```
 
 ### Copy Files
@@ -95,22 +103,30 @@ Recursive deletion of everything under a virtual path. Requires a confirmation p
 teleman purge backup:old_backups/ --confirm
 ```
 
-## 3. High-Performance Flags
+## 3. High-Performance & Memory Safety
 
-Teleman natively utilizes all logical CPU cores available to it. You can tightly adjust the worker capacities to match your specific API Host or bandwidth limits.
+Teleman natively utilizes all logical CPU cores and implements advanced memory management to handle massive files without OOM (Out-of-Memory) crashes.
 
-- **Concurrecy Flags**: 
+- **Scaling & Memory Safety**: 
+  - **Buffer Pooling**: Uses internal buffer pools (`sync.Pool`) to reuse memory during high-concurrency uploads.
+  - **Direct Streaming**: Downloads stream directly to disk using temporary files, allowing you to reassemble files much larger than your available RAM.
+- **Concurrency Flags**: 
   - `--transfers` (`-t`): Determines how many concurrent chunks operate over HTTP paths at once (Default: 4).
   - `--checkers` (`-c`): Determines how rapidly the disk scanner combs your local filesystem matching against the virtual tree (Default: 8).
 - **Chunk Parameters**: 
   - `--cz`: Chunk size (e.g., `49M` for standard Cloud APIs or `1000M` for your Local API server).
 - **Encryption**: 
   - `--encrypt` (`-e`): Seal all chunks with AES-256-GCM before exiting the local machine. Password is resolved from: `TELEMAN_PASSWORD` env var → interactive prompt → `--password` flag.
-- **On The Fly Archiving**:
+- **On-the-Fly Archiving**:
   - `--zip`: Condenses directory trees into `.zip` archives before chunking.
   - `--tgz`: Condenses directory trees into `.tar.gz` archives before chunking.
 - **Media Native UI (Spotify-Clone Mode)**:
   - `--media`: Routes eligible single-chunk unencrypted files through Telegram's rich media endpoints (`/sendAudio`, `/sendVideo`, `/sendPhoto`). Extracts ID3 metadata (title, artist, album art) for audio files.
+- **Custom Captions**:
+  - `--caption`: Adds a text caption to the first chunk of each file. Use `--caption auto` for automatic metadata (filename, size, date, #ext) or any custom string.
+- **Dynamic Progress Monitoring**:
+  - Automatically provides real-time progress bars for all transfers in TTY mode. Displays per-file throughput, ETA, and overall job progress. Falls back to plain logs in non-interactive environments.
+
 - **Sync Overrides**:
   - `--force` (`-f`): Bypasses index diffing. Forces immediate re-upload of all files.
 - **Preview Mode**:

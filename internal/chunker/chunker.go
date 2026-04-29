@@ -277,6 +277,12 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 							logger.Debug("      [Media] %s → sendVideo", filename)
 						}
 						fileID, msgID, upErr = e.client.SendMediaCtx(ctx, chatID, threadID, chunkName, chunkReader, method, fieldName, params, thumbData, currentCaption)
+						
+						if upErr != nil {
+							logger.Debug("      [Media] %s %s failed (%v) — falling back to sendDocument", filename, method, upErr)
+							chunkReader.Seek(0, io.SeekStart)
+							fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader, currentCaption)
+						}
 					} else {
 						fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader, currentCaption)
 					}

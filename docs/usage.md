@@ -111,8 +111,20 @@ Teleman natively utilizes all logical CPU cores and implements advanced memory m
   - **Buffer Pooling**: Uses internal buffer pools (`sync.Pool`) to reuse memory during high-concurrency uploads.
   - **Direct Streaming**: Downloads stream directly to disk using temporary files, allowing you to reassemble files much larger than your available RAM.
 - **Concurrency Flags**: 
-  - `--transfers` (`-t`): Determines how many concurrent chunks operate over HTTP paths at once (Default: 4).
-  - `--checkers` (`-c`): Determines how rapidly the disk scanner combs your local filesystem matching against the virtual tree (Default: 8).
+  - `--checkers` (`-c`): Number of concurrent file scanning workers (CPU/disk bound). Default: 8.
+  - `--transfers` (`-t`): Number of concurrent upload/download workers (network bound). Default: 4.
+
+### Performance Tuning
+- **What they do**:
+  - **Checkers**: Scanning, hashing, diffing files against the index.
+  - **Transfers**: Upload/download workers over HTTP.
+
+- **Example configurations**:
+  - **Low** (Small systems): `-c 2 -t 2`
+  - **Balanced** (Standard PCs): `-c 8 -t 6`
+  - **Aggressive** (High performance): `-c 12 -t 8`
+
+> ⚠️ **Warning:** Setting values too high can reduce performance due to CPU contention, memory pressure, or hitting API rate limits.
 - **Chunk Parameters**: 
   - `--cz`: Chunk size (e.g., `49M` for standard Cloud APIs or `1000M` for your Local API server).
 - **Encryption**: 

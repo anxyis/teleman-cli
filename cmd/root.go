@@ -152,15 +152,11 @@ Examples:
 		localDest := args[1]
 		logger.Step("Starting Download:\n Source: %s\n Dest:   %s", targetRaw, localDest)
 
-		password, err := resolvePassword()
+		opts, err := buildTransferOptions(cmd)
 		if err != nil {
 			return err
 		}
-
-		opts := &models.TransferOptions{
-			Password: password,
-			DryRun:   dryRun,
-		}
+		opts.PasswordCallback = resolvePassword
 
 		if err := core.RunDownload(globalCtx, targetRaw, localDest, opts); err != nil {
 			return fmt.Errorf("download error: %v", err)
@@ -556,9 +552,13 @@ func isTerminal() bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
+func addCommonFlags(cmd *cobra.Command) {
+	cmd.Flags().IntVarP(&transfers, "transfers", "t", 4, "Number of concurrent upload/download workers (network bound).\nRecommended: 2 (small), 4 (balanced), 8 (high perf)")
+	cmd.Flags().IntVarP(&checkers, "checkers", "c", 8, "Number of concurrent file scanning workers (CPU/disk bound).\nRecommended: 4 (small), 8 (balanced), 16 (high perf)")
+}
+
 func addTransferFlags(cmd *cobra.Command) {
-	cmd.Flags().IntVarP(&transfers, "transfers", "t", 4, "Number of file transfers to run in parallel")
-	cmd.Flags().IntVarP(&checkers, "checkers", "c", 8, "Number of checkers to run in parallel")
+	addCommonFlags(cmd)
 	cmd.Flags().StringVar(&chunkSize, "cz", "49M", "Chunk size (e.g. 49M, 1G, 512K)")
 	cmd.Flags().BoolVarP(&encrypt, "encrypt", "e", false, "Encrypt chunks with AES-256-GCM (requires password)")
 	cmd.Flags().BoolVar(&zipMode, "zip", false, "Compress source folder into streaming zip archive before chunking")
@@ -583,6 +583,7 @@ func init() {
 		cmd.MarkFlagsMutuallyExclusive("zip", "tgz")
 	}
 
+	addCommonFlags(downloadCmd)
 	downloadCmd.Flags().StringVar(&downloadPassword, "password", "", "Decryption password (prefer TELEMAN_PASSWORD env var)")
 	downloadCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be downloaded without making changes")
 

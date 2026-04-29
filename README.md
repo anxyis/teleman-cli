@@ -25,12 +25,16 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
 
 ## 🚀 Installation & Setup
 
-1. **Build from Source**
-   ```bash
-   git clone git@github.com:anxyis/teleman-cli.git
-   cd teleman-cli
-   go build -o teleman.exe .
-   ```
+### 1. Download Binaries
+You can download pre-built binaries for Windows and Linux from the [GitHub Releases](https://github.com/anxyis/teleman-cli/releases) page. No Go installation is required.
+
+### 2. Build from Source
+If you prefer to build from source:
+```bash
+git clone git@github.com:anxyis/teleman-cli.git
+cd teleman-cli
+go build -o teleman.exe .
+```
 
 2. **Run Initialization**
    You require a standard Telegram Bot API Token (from `@BotFather`) and the numeric Channel ID where you wish to permanently map your root index logic.
@@ -97,6 +101,7 @@ The true "file mapping" dictating how all data chunks piece back into original t
 | **[Command Guide](docs/command-guide.md)** | 📘 Full scenario-driven guide with copy-pasteable examples for every command, performance tuning, encryption, media mode, and common recipes |
 | [Usage Reference](docs/usage.md) | Quick command overview and flag reference |
 | [Architecture](docs/architecture.md) | Internals: index design, chunking pipeline, download reassembly, and namespaced isolation |
+| [Release Guide](docs/release.md) | 📦 How to build binaries and create new releases |
 
 > **New here?** Start with the **[Command Guide](docs/command-guide.md)** — it covers everything from first-time setup to advanced multi-threaded encrypted backups with real examples for every scenario.
 

@@ -13,6 +13,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/progress"
+	"sync"
 )
 
 // RunDownload handles downloading files from a virtual Telegram target to the local filesystem.
@@ -43,10 +44,20 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 	// Avoids partial prefix collisions (e.g. "media" should NOT match "media_test/file.txt")
 	virtualPrefix := strings.TrimLeft(tctx.VirtualRoot, "/")
 	var matchedPaths []string
+	var anyEncrypted bool
 
 	for vPath := range targetFiles {
 		if matchesVirtualPrefix(vPath, virtualPrefix) {
 			matchedPaths = append(matchedPaths, vPath)
+			
+			if !anyEncrypted {
+				for _, chunk := range targetFiles[vPath].Chunks {
+					if chunk.Encrypted {
+						anyEncrypted = true
+						break
+					}
+				}
+			}
 		}
 	}
 
@@ -60,6 +71,14 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 
 	logger.Step("=> Found %d files to download", len(matchedPaths))
 
+	if anyEncrypted && len(opts.Password) == 0 && opts.PasswordCallback != nil {
+		pwd, err := opts.PasswordCallback()
+		if err != nil {
+			return fmt.Errorf("failed to resolve password: %v", err)
+		}
+		opts.Password = pwd
+	}
+
 	// Dry-run mode
 	if opts.DryRun {
 		logger.Info("=> [DRY RUN] Would download %d files:", len(matchedPaths))
@@ -72,85 +91,118 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 
 	// 7. Download pipeline
 	var downloaded, errors int
+	var mu sync.Mutex
 
 	pm := progress.NewManager(ctx, len(matchedPaths), "Downloading")
 
-	for i, vPath := range matchedPaths {
-		// Check for cancellation between files
-		select {
-		case <-ctx.Done():
-			logger.Warn("=> Download interrupted after %d/%d files.", i, len(matchedPaths))
-			logger.Success("=> Download Summary: %d Downloaded, %d Errors", downloaded, errors)
-			pm.Wait()
-			return fmt.Errorf("download cancelled: %w", ctx.Err())
-		default:
-		}
+	concurrency := opts.Transfers
+	if concurrency <= 0 {
+		concurrency = 4
+	}
+	if concurrency > len(matchedPaths) {
+		concurrency = len(matchedPaths)
+	}
 
-		entry := targetFiles[vPath]
+	jobs := make(chan string, len(matchedPaths))
+	for _, vPath := range matchedPaths {
+		jobs <- vPath
+	}
+	close(jobs)
 
-		// Determine local path relative to the prefix
-		relPath := vPath
-		if virtualPrefix != "" {
-			relPath = strings.TrimPrefix(vPath, virtualPrefix)
-			relPath = strings.TrimLeft(relPath, "/")
-		}
-		// If the user targeted a single file (relPath is now empty), use the filename
-		if relPath == "" {
-			relPath = filepath.Base(vPath)
-		}
+	var wg sync.WaitGroup
+	for w := 0; w < concurrency; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for vPath := range jobs {
+				// Check for cancellation between files
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 
-		localPath := filepath.Join(localDest, filepath.FromSlash(relPath))
+				entry := targetFiles[vPath]
 
-		// Create parent directories
-		if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
-			logger.Error("      [Error] Failed to create directory for %s: %v", localPath, err)
-			errors++
-			pm.IncrementOverall()
-			continue
-		}
+				// Determine local path relative to the prefix
+				relPath := vPath
+				if virtualPrefix != "" {
+					relPath = strings.TrimPrefix(vPath, virtualPrefix)
+					relPath = strings.TrimLeft(relPath, "/")
+				}
+				// If the user targeted a single file (relPath is now empty), use the filename
+				if relPath == "" {
+					relPath = filepath.Base(vPath)
+				}
 
-		if !pm.IsTTY() {
-			logger.Info("[%d/%d] %s (%d bytes, %d chunks)", i+1, len(matchedPaths), vPath, entry.Size, len(entry.Chunks))
-		}
+				localPath := filepath.Join(localDest, filepath.FromSlash(relPath))
 
-		// Write to a temp file first, then rename on success.
-		// This leaves a clean .partial file on failure, making future resume trivial.
-		tmpPath := localPath + ".partial"
+				// Create parent directories
+				if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+					logger.Error("      [Error] Failed to create directory for %s: %v", localPath, err)
+					mu.Lock()
+					errors++
+					mu.Unlock()
+					pm.IncrementOverall()
+					continue
+				}
 
-		bar := pm.AddFileBar(vPath, entry.Size)
-		var progressTracker io.Writer
-		if bar != nil {
-			progressTracker = progress.NewBarWriter(bar)
-		}
+				if !pm.IsTTY() {
+					logger.Info("Downloading: %s (%d bytes, %d chunks)", vPath, entry.Size, len(entry.Chunks))
+				}
 
-		if err := downloadFile(ctx, engine, entry, tmpPath, opts.Password, progressTracker); err != nil {
-			if bar != nil {
-				bar.Abort(true)
+				// Write to a temp file first, then rename on success.
+				// This leaves a clean .partial file on failure, making future resume trivial.
+				tmpPath := localPath + ".partial"
+
+				bar := pm.AddFileBar(vPath, entry.Size)
+				var progressTracker io.Writer
+				if bar != nil {
+					progressTracker = progress.NewBarWriter(bar)
+				}
+
+				if err := downloadFile(ctx, engine, entry, tmpPath, opts.Password, progressTracker); err != nil {
+					if bar != nil {
+						bar.Abort(true)
+					}
+					logger.Error("      [Error] %v", err)
+					mu.Lock()
+					errors++
+					mu.Unlock()
+					pm.IncrementOverall()
+					continue
+				}
+
+				// Ensure bar completes before incrementing overall
+				if bar != nil {
+					bar.SetTotal(entry.Size, true)
+				}
+
+				// Atomic rename from .partial to final destination
+				if err := os.Rename(tmpPath, localPath); err != nil {
+					logger.Error("      [Error] Failed to finalize %s: %v", localPath, err)
+					// Clean up partial file on rename failure
+					os.Remove(tmpPath)
+					mu.Lock()
+					errors++
+					mu.Unlock()
+					pm.IncrementOverall()
+					continue
+				}
+
+				mu.Lock()
+				downloaded++
+				mu.Unlock()
+				pm.IncrementOverall()
+				logger.Debug("      Success! %s", localPath)
 			}
-			logger.Error("      [Error] %v", err)
-			errors++
-			pm.IncrementOverall()
-			continue
-		}
+		}()
+	}
 
-		// Ensure bar completes before incrementing overall
-		if bar != nil {
-			bar.SetTotal(entry.Size, true)
-		}
+	wg.Wait()
 
-		// Atomic rename from .partial to final destination
-		if err := os.Rename(tmpPath, localPath); err != nil {
-			logger.Error("      [Error] Failed to finalize %s: %v", localPath, err)
-			// Clean up partial file on rename failure
-			os.Remove(tmpPath)
-			errors++
-			pm.IncrementOverall()
-			continue
-		}
-
-		downloaded++
-		pm.IncrementOverall()
-		logger.Debug("      Success! %s", localPath)
+	if ctx.Err() != nil {
+		logger.Warn("=> Download interrupted.")
 	}
 
 	pm.Wait()

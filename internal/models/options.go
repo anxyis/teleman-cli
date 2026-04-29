@@ -18,9 +18,10 @@ type TransferOptions struct {
 	MediaMode bool   // Route eligible files to Telegram media endpoints
 	Force     bool   // Bypass index diffing, force re-upload
 	DryRun           bool   // Show what would be transferred without mutating state
-	Password         []byte // Encryption/decryption passphrase (derived from env, prompt, or flag)
-	AutoUpgradeChunk bool   // Indicates if --cz was left at default and can be auto-upgraded for local APIs
-	Caption          string // Caption to add to the telegram message
+	Password         []byte                 // Encryption/decryption passphrase (derived from env, prompt, or flag)
+	PasswordCallback func() ([]byte, error) // Lazy evaluation for password prompting
+	AutoUpgradeChunk bool                   // Indicates if --cz was left at default and can be auto-upgraded for local APIs
+	Caption          string                 // Caption to add to the telegram message
 }
 
 // ParseChunkSize converts a human-readable size string (e.g., "49M", "1G", "512K")

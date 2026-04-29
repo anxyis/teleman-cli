@@ -381,14 +381,29 @@ teleman purge backup:archive/ -t 16 --confirm
 
 ---
 
-## 8. Best Performance & Multi-Threading
+## 10. Performance Tuning
 
 Teleman exposes two concurrency pools you can tune:
 
 | Flag | Default | Role |
 |---|---|---|
-| `-t` / `--transfers` | `4` | Parallel HTTP upload/download workers |
-| `-c` / `--checkers` | `8` | Parallel disk scanner / index diff workers |
+| `-c` / `--checkers` | `8` | Number of concurrent file scanning workers (CPU/disk bound) |
+| `-t` / `--transfers` | `4` | Number of concurrent upload/download workers (network bound) |
+
+### What They Do
+- **Checkers (`-c`)**: These workers scan your local disk, hash chunks, and diff them against the index. They are primarily CPU and disk I/O bound.
+- **Transfers (`-t`)**: These workers handle the actual HTTP upload and download chunk streams. They are entirely network bound.
+
+### Example Configurations
+
+- **Low** (Small systems, limited bandwidth):
+  `-c 2 -t 2`
+- **Balanced** (Standard PCs):
+  `-c 8 -t 6`
+- **Aggressive** (High-end CPU, Gigabit fiber):
+  `-c 12 -t 8`
+
+> ⚠️ **Warning:** Setting values too high can actually reduce performance due to CPU contention, memory pressure, or hitting Telegram's strict API rate limits.
 
 Teleman uses a custom `http.Transport` initialized with a massive `100` MaxIdleConnsPerHost connection pool. This prevents TLS handshake drops even on extreme worker settings.
 

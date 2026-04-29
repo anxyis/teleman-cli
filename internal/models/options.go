@@ -20,6 +20,7 @@ type TransferOptions struct {
 	DryRun           bool   // Show what would be transferred without mutating state
 	Password         []byte // Encryption/decryption passphrase (derived from env, prompt, or flag)
 	AutoUpgradeChunk bool   // Indicates if --cz was left at default and can be auto-upgraded for local APIs
+	Caption          string // Caption to add to the telegram message
 }
 
 // ParseChunkSize converts a human-readable size string (e.g., "49M", "1G", "512K")

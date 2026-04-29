@@ -185,7 +185,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 				bar := pm.AddFileBar(task.VirtualPath, task.FileInfo.Size())
 				readerProxy := pm.ProxyReader(f, bar)
 
-				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.VirtualPath), readerProxy, s.opts.Password)
+				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.VirtualPath), readerProxy, s.opts.Password, s.opts.Caption)
 
 				if rc, ok := readerProxy.(interface{ Close() error }); ok {
 					rc.Close()

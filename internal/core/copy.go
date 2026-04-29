@@ -99,7 +99,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		bar := pm.AddFileBar(vPath, 0)
 		readerProxy := pm.ProxyReader(r, bar)
 
-		chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(vPath), readerProxy, opts.Password)
+		chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(vPath), readerProxy, opts.Password, opts.Caption)
 
 		if rc, ok := readerProxy.(interface{ Close() error }); ok {
 			rc.Close()
@@ -335,7 +335,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 				bar := pm.AddFileBar(task.virtualPath, task.fileInfo.Size())
 				readerProxy := pm.ProxyReader(f, bar)
 
-				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.virtualPath), readerProxy, opts.Password)
+				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.virtualPath), readerProxy, opts.Password, opts.Caption)
 
 				// Ensure proxy reader wraps things up nicely
 				if rc, ok := readerProxy.(interface{ Close() error }); ok {

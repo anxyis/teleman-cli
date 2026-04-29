@@ -68,7 +68,7 @@ func (m *Manager) AcquireLock(owner, operation string) error {
 	tmp.Write(lockData)
 	tmp.Seek(0, io.SeekStart)
 
-	_, msgID, err := m.client.SendDocument(m.indexChannel, "", "teleman.lock.json", tmp)
+	_, msgID, err := m.client.SendDocument(m.indexChannel, "", "teleman.lock.json", tmp, "")
 	tmp.Close()
 	if err != nil {
 		return fmt.Errorf("failed to send lock message: %v", err)
@@ -112,7 +112,7 @@ func (m *Manager) PushVersion(idx *models.Index) error {
 	tmp.Seek(0, io.SeekStart)
 
 	// Upload
-	_, _, err = m.client.SendDocument(m.indexChannel, "", "teleman.index.json", tmp)
+	_, _, err = m.client.SendDocument(m.indexChannel, "", "teleman.index.json", tmp, "")
 
 	// Write to local cache so next run maintains state
 	if err == nil {

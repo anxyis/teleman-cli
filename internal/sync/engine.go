@@ -10,19 +10,13 @@ import (
 	"sync/atomic"
 
 	"github.com/teleman-cli/teleman/internal/chunker"
-	"github.com/teleman-cli/teleman/internal/config"
-	"github.com/teleman-cli/teleman/internal/index"
+	"github.com/teleman-cli/teleman/internal/core"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
-	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
 // SyncEngine orchestrates parallel file diffing and upload transfers.
 type SyncEngine struct {
-	client     *telegram.Client
-	idxManager *index.Manager
-	chunker    *chunker.Engine
-	cfg        *models.Config
 	opts       *models.TransferOptions
 }
 
@@ -34,62 +28,33 @@ type fileTask struct {
 
 // NewSyncEngine creates a sync engine using explicit TransferOptions instead of globals.
 func NewSyncEngine(opts *models.TransferOptions) (*SyncEngine, error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %v", err)
-	}
-
-	client := telegram.NewSmartClient(cfg.ActiveToken, cfg.APIHosts, cfg.FileServerHosts)
-
-	if opts.AutoUpgradeChunk && !strings.Contains(client.APIHost, "api.telegram.org") {
-		logger.Info("   [Auto-Detect] Local API detected. Upgrading chunk size from 49M to 1999M limit.")
-		opts.ChunkSize = 1999 * 1024 * 1024
-	}
-
-	idxManager, err := index.NewManager(client, cfg.IndexChannelID)
-	if err != nil {
-		return nil, err
-	}
-
 	return &SyncEngine{
-		client:     client,
-		idxManager: idxManager,
-		chunker:    chunker.NewEngineWithSize(client, opts.MediaMode, opts.ChunkSize),
-		cfg:        cfg,
 		opts:       opts,
 	}, nil
 }
 
 // Run executes the sync operation with context support for graceful shutdown.
 func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
-	parts := strings.SplitN(targetRaw, ":", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid target format. Use alias:virtual/path")
+	tctx, err := core.InitContext(ctx, targetRaw, s.opts)
+	if err != nil {
+		return err
 	}
-	alias, virtualRoot := parts[0], parts[1]
 
-	target, ok := s.cfg.Targets[alias]
-	if !ok {
-		return fmt.Errorf("target alias '%s' not found", alias)
-	}
+	engine := chunker.NewEngineWithSize(tctx.Client, s.opts.MediaMode, s.opts.ChunkSize)
 
 	// Acquire distributed lock
-	if err := s.idxManager.AcquireLock("", "sync"); err != nil {
+	if err := tctx.IdxManager.AcquireLock("", "sync"); err != nil {
 		return fmt.Errorf("failed to acquire lock: %v", err)
 	}
-	defer s.idxManager.ReleaseLock()
+	defer tctx.IdxManager.ReleaseLock()
 
-	idx, err := s.idxManager.Load()
+	idx, err := tctx.IdxManager.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load index: %v", err)
 	}
 
-	targetKey := target.ChatID
-	if target.ThreadID != "" {
-		targetKey += ":" + target.ThreadID
-	}
-	if idx.Targets[targetKey] == nil {
-		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
+	if idx.Targets[tctx.TargetKey] == nil {
+		idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
 	}
 
 	// 1. Gather files
@@ -103,7 +68,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 		filepath.Walk(source, func(path string, fInfo os.FileInfo, err error) error {
 			if !fInfo.IsDir() {
 				rel, _ := filepath.Rel(source, path)
-				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
+				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
 				localFiles = append(localFiles, fileTask{
 					LocalPath:   path,
 					VirtualPath: strings.TrimLeft(vPath, "/"),
@@ -113,7 +78,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 			return nil
 		})
 	} else {
-		vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
+		vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
 		localFiles = append(localFiles, fileTask{
 			LocalPath:   source,
 			VirtualPath: strings.TrimLeft(vPath, "/"),
@@ -137,7 +102,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 			for task := range tasksChan {
 				needsUpload := true
 				if !s.opts.Force {
-					if existing, ok := idx.Targets[targetKey][task.VirtualPath]; ok {
+					if existing, ok := idx.Targets[tctx.TargetKey][task.VirtualPath]; ok {
 						if existing.Size == task.FileInfo.Size() && existing.ModTime == task.FileInfo.ModTime().Unix() {
 							needsUpload = false
 							skipped.Add(1)
@@ -211,7 +176,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 					continue
 				}
 
-				chunks, err := s.chunker.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.VirtualPath), f, s.opts.Password)
+				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.VirtualPath), f, s.opts.Password)
 				f.Close()
 				if err != nil {
 					logger.Error("      [Error] Upload Failed for %s: %v", task.VirtualPath, err)
@@ -221,7 +186,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 
 				// Thread-safe index update
 				idxMutex.Lock()
-				idx.Targets[targetKey][task.VirtualPath] = &models.FileEntry{
+				idx.Targets[tctx.TargetKey][task.VirtualPath] = &models.FileEntry{
 					Size:    task.FileInfo.Size(),
 					ModTime: task.FileInfo.ModTime().Unix(),
 					Chunks:  chunks,
@@ -247,7 +212,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 	logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors", uploaded.Load()-errors.Load(), skipped.Load(), errors.Load())
 
 	logger.Step("=> Committing new index to Telegram...")
-	if err := s.idxManager.PushVersion(idx); err != nil {
+	if err := tctx.IdxManager.PushVersion(idx); err != nil {
 		return fmt.Errorf("failed to commit index: %v", err)
 	}
 

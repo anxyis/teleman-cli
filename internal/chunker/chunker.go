@@ -21,20 +21,35 @@ import (
 	"golang.org/x/crypto/scrypt"
 )
 
+import "sync"
+
 // Engine handles breaking files into streams and pushing to Telegram.
 type Engine struct {
 	client    *telegram.Client
 	ChunkSize int64
 	MediaMode bool
+	pool      sync.Pool
+}
+
+func newEngineWithPool(client *telegram.Client, mediaMode bool, chunkSize int64) *Engine {
+	return &Engine{
+		client:    client,
+		ChunkSize: chunkSize,
+		MediaMode: mediaMode,
+		pool: sync.Pool{
+			New: func() interface{} {
+				// We don't allocate the full ChunkSize immediately to save memory for small files,
+				// but we allocate a reasonable starting capacity.
+				buf := make([]byte, 0, 1024*1024)
+				return &buf
+			},
+		},
+	}
 }
 
 // NewEngine creates a chunking engine with dynamic chunk limits.
 func NewEngine(client *telegram.Client, mediaMode bool) *Engine {
-	return &Engine{
-		client:    client,
-		ChunkSize: 49 * 1024 * 1024,
-		MediaMode: mediaMode,
-	}
+	return newEngineWithPool(client, mediaMode, 49*1024*1024)
 }
 
 // NewEngineWithSize creates a chunking engine with an explicit chunk size.
@@ -42,11 +57,7 @@ func NewEngineWithSize(client *telegram.Client, mediaMode bool, chunkSize int64)
 	if chunkSize <= 0 {
 		chunkSize = 49 * 1024 * 1024
 	}
-	return &Engine{
-		client:    client,
-		ChunkSize: chunkSize,
-		MediaMode: mediaMode,
-	}
+	return newEngineWithPool(client, mediaMode, chunkSize)
 }
 
 // ProcessStream chunks an io.Reader and uploads parts to telegram
@@ -85,13 +96,22 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 
 		// Fallback for streams (e.g. zip/tgz): allocate a reasonable 1MB to start, avoiding massive GC pressure
 		if expectedSize == 0 {
-			expectedSize = 1024 * 1024 
+			expectedSize = 1024 * 1024
 			if expectedSize > e.ChunkSize {
 				expectedSize = e.ChunkSize
 			}
 		}
 
-		chunkData := make([]byte, 0, expectedSize)
+		bufPtr := e.pool.Get().(*[]byte)
+		chunkData := (*bufPtr)[:0]
+
+		// Pre-allocate capacity if we know it's going to be larger than current capacity
+		if int64(cap(chunkData)) < expectedSize {
+			newBuf := make([]byte, 0, expectedSize)
+			chunkData = newBuf
+			bufPtr = &newBuf
+		}
+
 		tmp := make([]byte, 64*1024) // 64KB read buffer
 		var readErr error
 		var nBytes int64
@@ -113,28 +133,34 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 		}
 
 		if nBytes == 0 && readErr == io.EOF {
+			e.pool.Put(bufPtr)
 			break
 		}
 
 		if readErr != nil && readErr != io.EOF {
+			e.pool.Put(bufPtr)
 			return nil, readErr
 		}
 
 		isEOF := (readErr == io.EOF)
 		if nBytes > 0 {
 			var isEncrypted bool
+			var dataToUpload []byte
 			if len(password) > 0 {
 				encryptedData, encErr := encryptAES(chunkData, password)
 				if encErr != nil {
+					e.pool.Put(bufPtr)
 					return nil, encErr
 				}
-				chunkData = encryptedData
+				dataToUpload = encryptedData
 				isEncrypted = true
+			} else {
+				dataToUpload = chunkData
 			}
 
-			hash := HashChunk(chunkData)
+			hash := HashChunk(dataToUpload)
 
-			chunkReader := bytes.NewReader(chunkData)
+			chunkReader := bytes.NewReader(dataToUpload)
 			var fileID string
 			var msgID int64
 			var upErr error
@@ -226,13 +252,14 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 			}
 
 			if upErr != nil {
+				e.pool.Put(bufPtr)
 				return nil, upErr
 			}
 
 			// 6. Record metadata
 			entry := &models.ChunkEntry{
 				Offset:    offset,
-				Size:      int64(len(chunkData)),
+				Size:      int64(len(dataToUpload)),
 				Hash:      hash,
 				TGFileID:  fileID,
 				TGMsgID:   msgID,
@@ -240,6 +267,9 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 			}
 			chunks = append(chunks, entry)
 			offset += nBytes
+
+			// Return buffer to pool after upload
+			e.pool.Put(bufPtr)
 		}
 
 		if isEOF {
@@ -294,52 +324,79 @@ func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.Chunk
 
 		logger.Debug("      [Chunk %d/%d] file_path resolved: %s", i+1, len(sorted), filePath)
 
-		// 3. Download the raw chunk stream
-		stream, err := e.client.DownloadFileStreamCtx(ctx, filePath)
-		if err != nil {
-			return fmt.Errorf("chunk %d/%d: download failed: %v", i+1, len(sorted), err)
-		}
-
-		// Read chunk bytes (we need the full chunk in memory for hash verification)
-		// Pre-allocate the exact slice capacity to bypass massive slice growth overhead
-		expectedSize := chunk.Size
-		if expectedSize <= 0 {
-			expectedSize = 1024 * 1024 // 1MB fallback
-		}
-		
-		buf := bytes.NewBuffer(make([]byte, 0, expectedSize))
-		_, err = buf.ReadFrom(stream)
-		stream.Close()
-		if err != nil {
-			return fmt.Errorf("chunk %d/%d: failed to read stream: %v", i+1, len(sorted), err)
-		}
-		chunkData := buf.Bytes()
-
-		// 4. Strict hash verification BEFORE any decryption
-		// The hash was computed on the encrypted bytes during upload,
-		// so we verify against the raw downloaded bytes.
-		computedHash := HashChunk(chunkData)
-		if computedHash != chunk.Hash {
-			return fmt.Errorf("chunk %d/%d: HASH MISMATCH (expected %s, got %s) — aborting download to prevent data corruption", i+1, len(sorted), chunk.Hash, computedHash)
-		}
-
-		logger.Debug("      [Chunk %d/%d] Hash verified ✓", i+1, len(sorted))
-
-		// 5. Decrypt if the chunk was encrypted during upload
-		if chunk.Encrypted {
-			if len(password) == 0 {
-				return fmt.Errorf("chunk %d/%d: chunk is encrypted but no password was provided", i+1, len(sorted))
-			}
-			decrypted, err := decryptAES(chunkData, password)
+		err = func() error {
+			// 3. Stream download, compute hash dynamically
+			stream, err := e.client.DownloadFileStreamCtx(ctx, filePath)
 			if err != nil {
-				return fmt.Errorf("chunk %d/%d: decryption failed: %v", i+1, len(sorted), err)
+				return fmt.Errorf("chunk %d/%d: download failed: %v", i+1, len(sorted), err)
 			}
-			chunkData = decrypted
-		}
 
-		// 6. Stream to destination writer
-		if _, err := dst.Write(chunkData); err != nil {
-			return fmt.Errorf("chunk %d/%d: write to disk failed: %v", i+1, len(sorted), err)
+			// We use a temp file to avoid holding the chunk in memory if it's large.
+			tmpFile, err := os.CreateTemp("", "teleman-chunk-*")
+			if err != nil {
+				stream.Close()
+				return fmt.Errorf("chunk %d/%d: failed to create tmp file: %v", i+1, len(sorted), err)
+			}
+			tmpFileName := tmpFile.Name()
+			defer os.Remove(tmpFileName)
+
+			hasher := sha256.New()
+			multiWriter := io.MultiWriter(hasher, tmpFile)
+
+			_, err = io.Copy(multiWriter, stream)
+			stream.Close()
+			tmpFile.Close() // Close for writing
+
+			if err != nil {
+				return fmt.Errorf("chunk %d/%d: failed to read stream: %v", i+1, len(sorted), err)
+			}
+
+			// 4. Strict hash verification
+			computedHash := fmt.Sprintf("%x", hasher.Sum(nil))
+			if computedHash != chunk.Hash {
+				return fmt.Errorf("chunk %d/%d: HASH MISMATCH (expected %s, got %s) — aborting download to prevent data corruption", i+1, len(sorted), chunk.Hash, computedHash)
+			}
+
+			logger.Debug("      [Chunk %d/%d] Hash verified ✓", i+1, len(sorted))
+
+			// Open temp file for reading
+			tmpFileRead, err := os.Open(tmpFileName)
+			if err != nil {
+				return fmt.Errorf("chunk %d/%d: failed to open tmp file for reading: %v", i+1, len(sorted), err)
+			}
+			defer tmpFileRead.Close()
+
+			// 5. Decrypt if the chunk was encrypted during upload
+			if chunk.Encrypted {
+				if len(password) == 0 {
+					return fmt.Errorf("chunk %d/%d: chunk is encrypted but no password was provided", i+1, len(sorted))
+				}
+
+				// For GCM decryption, we still need it in memory to authenticate.
+				// However, at least we didn't hold it in memory while downloading over network.
+				chunkData, err := io.ReadAll(tmpFileRead)
+				if err != nil {
+					return fmt.Errorf("chunk %d/%d: failed to read encrypted chunk from disk: %v", i+1, len(sorted), err)
+				}
+
+				decrypted, err := decryptAES(chunkData, password)
+				if err != nil {
+					return fmt.Errorf("chunk %d/%d: decryption failed: %v", i+1, len(sorted), err)
+				}
+
+				if _, err := dst.Write(decrypted); err != nil {
+					return fmt.Errorf("chunk %d/%d: write to disk failed: %v", i+1, len(sorted), err)
+				}
+			} else {
+				// Fast path for unencrypted: just io.Copy from tmp file to destination
+				if _, err := io.Copy(dst, tmpFileRead); err != nil {
+					return fmt.Errorf("chunk %d/%d: write to disk failed: %v", i+1, len(sorted), err)
+				}
+			}
+			return nil
+		}()
+		if err != nil {
+			return err
 		}
 	}
 
@@ -347,15 +404,8 @@ func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.Chunk
 }
 
 // DeriveKey uses scrypt to derive a 32-byte AES-256 key from a passphrase.
-// The salt is deterministic (derived from the passphrase itself via SHA-256)
-// so the same passphrase always produces the same key without needing to store salt.
-// This is a deliberate trade-off: we lose per-file salt uniqueness but gain the ability
-// to decrypt without any additional metadata beyond the passphrase.
-func DeriveKey(passphrase []byte) ([]byte, error) {
-	// Use SHA-256 of the passphrase as a deterministic salt
-	saltHash := sha256.Sum256(passphrase)
-	salt := saltHash[:16]
-
+// Takes a salt.
+func DeriveKey(passphrase []byte, salt []byte) ([]byte, error) {
 	// scrypt params: N=32768, r=8, p=1, keyLen=32 (AES-256)
 	key, err := scrypt.Key(passphrase, salt, 32768, 8, 1, 32)
 	if err != nil {
@@ -364,9 +414,15 @@ func DeriveKey(passphrase []byte) ([]byte, error) {
 	return key, nil
 }
 
-// encryptAES encrypts data using AES-256-GCM with a key derived from the passphrase.
+// encryptAES encrypts data using AES-256-GCM with a key derived from the passphrase and a random salt.
+// Prepend format: `TLM1` (magic bytes) + 16 bytes salt + nonce + ciphertext
 func encryptAES(plaintext []byte, passphrase []byte) ([]byte, error) {
-	key, err := DeriveKey(passphrase)
+	salt := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, err
+	}
+
+	key, err := DeriveKey(passphrase, salt)
 	if err != nil {
 		return nil, err
 	}
@@ -386,13 +442,54 @@ func encryptAES(plaintext []byte, passphrase []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+	// Format: TLM1 + salt + nonce + sealed
+	out := make([]byte, 0, 4+len(salt)+len(nonce)+len(plaintext)+gcm.Overhead())
+	out = append(out, []byte("TLM1")...)
+	out = append(out, salt...)
+	out = append(out, nonce...)
+
+	return gcm.Seal(out, nonce, plaintext, nil), nil
 }
 
 // decryptAES decrypts data that was encrypted with encryptAES (AES-256-GCM).
-// The nonce is prepended to the ciphertext by the encrypt function.
+// Supports both new format with unique salt and old format with deterministic salt.
 func decryptAES(ciphertext []byte, passphrase []byte) ([]byte, error) {
-	key, err := DeriveKey(passphrase)
+	if len(ciphertext) > 4 && string(ciphertext[:4]) == "TLM1" {
+		// New format
+		if len(ciphertext) < 4+16 {
+			return nil, fmt.Errorf("ciphertext too short to contain salt")
+		}
+		salt := ciphertext[4:20]
+		key, err := DeriveKey(passphrase, salt)
+		if err != nil {
+			return nil, err
+		}
+
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			return nil, err
+		}
+
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return nil, err
+		}
+
+		nonceSize := gcm.NonceSize()
+		if len(ciphertext) < 4+16+nonceSize {
+			return nil, fmt.Errorf("ciphertext too short to contain nonce")
+		}
+
+		nonce := ciphertext[20:20+nonceSize]
+		sealed := ciphertext[20+nonceSize:]
+		return gcm.Open(nil, nonce, sealed, nil)
+	}
+
+	// Legacy format (deterministic salt)
+	saltHash := sha256.Sum256(passphrase)
+	salt := saltHash[:16]
+
+	key, err := DeriveKey(passphrase, salt)
 	if err != nil {
 		return nil, err
 	}

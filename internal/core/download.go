@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
+	"github.com/teleman-cli/teleman/internal/progress"
 )
 
 // RunDownload handles downloading files from a virtual Telegram target to the local filesystem.
@@ -70,12 +72,16 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 
 	// 7. Download pipeline
 	var downloaded, errors int
+
+	pm := progress.NewManager(ctx, len(matchedPaths), "Downloading")
+
 	for i, vPath := range matchedPaths {
 		// Check for cancellation between files
 		select {
 		case <-ctx.Done():
 			logger.Warn("=> Download interrupted after %d/%d files.", i, len(matchedPaths))
 			logger.Success("=> Download Summary: %d Downloaded, %d Errors", downloaded, errors)
+			pm.Wait()
 			return fmt.Errorf("download cancelled: %w", ctx.Err())
 		default:
 		}
@@ -99,18 +105,37 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 		if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
 			logger.Error("      [Error] Failed to create directory for %s: %v", localPath, err)
 			errors++
+			pm.IncrementOverall()
 			continue
 		}
 
-		logger.Info("[%d/%d] %s (%d bytes, %d chunks)", i+1, len(matchedPaths), vPath, entry.Size, len(entry.Chunks))
+		if !pm.IsTTY() {
+			logger.Info("[%d/%d] %s (%d bytes, %d chunks)", i+1, len(matchedPaths), vPath, entry.Size, len(entry.Chunks))
+		}
 
 		// Write to a temp file first, then rename on success.
 		// This leaves a clean .partial file on failure, making future resume trivial.
 		tmpPath := localPath + ".partial"
-		if err := downloadFile(ctx, engine, entry, tmpPath, opts.Password); err != nil {
+
+		bar := pm.AddFileBar(vPath, entry.Size)
+		var progressTracker io.Writer
+		if bar != nil {
+			progressTracker = progress.NewBarWriter(bar)
+		}
+
+		if err := downloadFile(ctx, engine, entry, tmpPath, opts.Password, progressTracker); err != nil {
+			if bar != nil {
+				bar.Abort(true)
+			}
 			logger.Error("      [Error] %v", err)
 			errors++
+			pm.IncrementOverall()
 			continue
+		}
+
+		// Ensure bar completes before incrementing overall
+		if bar != nil {
+			bar.SetTotal(entry.Size, true)
 		}
 
 		// Atomic rename from .partial to final destination
@@ -119,26 +144,29 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 			// Clean up partial file on rename failure
 			os.Remove(tmpPath)
 			errors++
+			pm.IncrementOverall()
 			continue
 		}
 
 		downloaded++
+		pm.IncrementOverall()
 		logger.Debug("      Success! %s", localPath)
 	}
 
+	pm.Wait()
 	logger.Success("=> Download Summary: %d Downloaded, %d Errors", downloaded, errors)
 	return nil
 }
 
 // downloadFile creates a file at the given path and streams reassembled chunks into it.
-func downloadFile(ctx context.Context, engine *chunker.Engine, entry *models.FileEntry, destPath string, password []byte) error {
+func downloadFile(ctx context.Context, engine *chunker.Engine, entry *models.FileEntry, destPath string, password []byte, progressTracker io.Writer) error {
 	f, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %v", destPath, err)
 	}
 	defer f.Close()
 
-	if err := engine.ReassembleStreamCtx(ctx, entry.Chunks, f, password); err != nil {
+	if err := engine.ReassembleStreamCtx(ctx, entry.Chunks, f, password, progressTracker); err != nil {
 		return fmt.Errorf("reassembly failed: %v", err)
 	}
 

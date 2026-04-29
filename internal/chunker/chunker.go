@@ -291,12 +291,12 @@ func HashChunk(data []byte) string {
 // Chunks are explicitly sorted by offset before reassembly.
 // A hash mismatch aborts immediately with a non-nil error.
 func (e *Engine) ReassembleStream(chunks []*models.ChunkEntry, dst io.Writer, password []byte) error {
-	return e.ReassembleStreamCtx(context.Background(), chunks, dst, password)
+	return e.ReassembleStreamCtx(context.Background(), chunks, dst, password, nil)
 }
 
 // ReassembleStreamCtx downloads chunks from Telegram and writes them sequentially to dst
 // with context support for graceful cancellation.
-func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.ChunkEntry, dst io.Writer, password []byte) error {
+func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.ChunkEntry, dst io.Writer, password []byte, progressTracker io.Writer) error {
 	if len(chunks) == 0 {
 		return fmt.Errorf("no chunks to reassemble")
 	}
@@ -341,7 +341,12 @@ func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.Chunk
 			defer os.Remove(tmpFileName)
 
 			hasher := sha256.New()
-			multiWriter := io.MultiWriter(hasher, tmpFile)
+			var multiWriter io.Writer
+			if progressTracker != nil {
+				multiWriter = io.MultiWriter(hasher, tmpFile, progressTracker)
+			} else {
+				multiWriter = io.MultiWriter(hasher, tmpFile)
+			}
 
 			_, err = io.Copy(multiWriter, stream)
 			stream.Close()

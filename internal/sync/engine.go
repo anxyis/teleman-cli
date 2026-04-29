@@ -13,6 +13,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/core"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
+	"github.com/teleman-cli/teleman/internal/progress"
 )
 
 // SyncEngine orchestrates parallel file diffing and upload transfers.
@@ -152,7 +153,8 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 
 	var uploaded atomic.Int32
 	var errors atomic.Int32
-	totalToUpload := int32(len(uploadList))
+
+	pm := progress.NewManager(ctx, len(uploadList), "Syncing")
 
 	for i := 0; i < s.opts.Transfers; i++ {
 		wgTransfer.Add(1)
@@ -166,19 +168,35 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 				default:
 				}
 
-				current := uploaded.Add(1)
-				logger.Info("[%d/%d] %s (%d bytes)", current, totalToUpload, task.VirtualPath, task.FileInfo.Size())
+				uploaded.Add(1)
+
+				if !pm.IsTTY() {
+					logger.Info("[%d/%d] %s (%d bytes)", uploaded.Load(), len(uploadList), task.VirtualPath, task.FileInfo.Size())
+				}
 
 				f, err := os.Open(task.LocalPath)
 				if err != nil {
 					logger.Error("      [Error] Failed to open %s: %v", task.LocalPath, err)
 					errors.Add(1)
+					pm.IncrementOverall()
 					continue
 				}
 
-				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.VirtualPath), f, s.opts.Password)
-				f.Close()
+				bar := pm.AddFileBar(task.VirtualPath, task.FileInfo.Size())
+				readerProxy := pm.ProxyReader(f, bar)
+
+				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.VirtualPath), readerProxy, s.opts.Password)
+
+				if rc, ok := readerProxy.(interface{ Close() error }); ok {
+					rc.Close()
+				}
+
+				pm.IncrementOverall()
+
 				if err != nil {
+					if bar != nil {
+						bar.Abort(true)
+					}
 					logger.Error("      [Error] Upload Failed for %s: %v", task.VirtualPath, err)
 					errors.Add(1)
 					continue
@@ -203,6 +221,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 	}
 	close(transferChan)
 	wgTransfer.Wait()
+	pm.Wait()
 
 	// Check if we were cancelled
 	if ctx.Err() != nil {

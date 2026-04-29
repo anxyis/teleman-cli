@@ -23,24 +23,16 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
 
 ---
 
-## 🚀 Installation & Setup
+## 🚀 Installation
 
-### 1. Download Binaries
-You can download pre-built binaries for Windows and Linux from the [GitHub Releases](https://github.com/anxyis/teleman-cli/releases) page. No Go installation is required.
+Teleman is distributed as a single standalone binary. No external dependencies or Go runtimes are required.
 
-### 2. Build from Source
-If you prefer to build from source:
-```bash
-git clone git@github.com:anxyis/teleman-cli.git
-cd teleman-cli
-go build -o teleman.exe .
-```
+- 🪟 **[How to install in Windows](docs/installation.md#windows)**
+- 🐧 **[How to install in Linux](docs/installation.md#linux)**
+- 📱 **[How to install in Termux](docs/installation.md#termux)**
+- 🛠️ **[Build from Source](docs/installation.md#building-from-source)**
 
-2. **Run Initialization**
-   You require a standard Telegram Bot API Token (from `@BotFather`) and the numeric Channel ID where you wish to permanently map your root index logic.
-   ```bash
-   ./teleman.exe config
-   ```
+> 📖 For first-time setup (Bot Token, Channel IDs), follow the **[Initialization Guide](docs/installation.md#initial-configuration)**.
 
 ---
 
@@ -99,6 +91,7 @@ The true "file mapping" dictating how all data chunks piece back into original t
 | Document | Description |
 |---|---|
 | **[Command Guide](docs/command-guide.md)** | 📘 Full scenario-driven guide with copy-pasteable examples for every command, performance tuning, encryption, media mode, and common recipes |
+| [Installation](docs/installation.md) | 🚀 Step-by-step setup for Windows, Linux, and Termux |
 | [Usage Reference](docs/usage.md) | Quick command overview and flag reference |
 | [Architecture](docs/architecture.md) | Internals: index design, chunking pipeline, download reassembly, and namespaced isolation |
 | [Release Guide](docs/release.md) | 📦 How to build binaries and create new releases |

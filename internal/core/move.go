@@ -12,6 +12,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/index"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
+	"github.com/teleman-cli/teleman/internal/progress"
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
@@ -138,6 +139,8 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 	var successfulMoves []string
 	var uploaded, skipped, errors int
 
+	pm := progress.NewManager(ctx, len(filesToMove), "Moving")
+
 	for i, task := range filesToMove {
 		// Check for cancellation
 		select {
@@ -153,6 +156,7 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 				if existing.Size == fileInfo.Size() && existing.ModTime == fileInfo.ModTime().Unix() {
 					logger.Debug("   [Skipped] %s (Unchanged — already on remote)", task.VPath)
 					skipped++
+					pm.IncrementOverall()
 					// Even skipped files should be deleted from source since they're confirmed on remote
 					successfulMoves = append(successfulMoves, task.LocalPath)
 					continue
@@ -160,18 +164,33 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			}
 		}
 
-		logger.Info("[%d/%d] %s (%d bytes)", i+1, len(filesToMove), task.VPath, fileInfo.Size())
+		if !pm.IsTTY() {
+			logger.Info("[%d/%d] %s (%d bytes)", i+1, len(filesToMove), task.VPath, fileInfo.Size())
+		}
 
 		f, err := os.Open(task.LocalPath)
 		if err != nil {
 			logger.Error("      Error: %v", err)
 			errors++
+			pm.IncrementOverall()
 			continue
 		}
 
-		chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.VPath), f, opts.Password, opts.Caption)
-		f.Close()
+		bar := pm.AddFileBar(task.VPath, fileInfo.Size())
+		readerProxy := pm.ProxyReader(f, bar)
+
+		chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.VPath), readerProxy, opts.Password, opts.Caption)
+		
+		if rc, ok := readerProxy.(interface{ Close() error }); ok {
+			rc.Close()
+		}
+
+		pm.IncrementOverall()
+
 		if err != nil {
+			if bar != nil {
+				bar.Abort(true)
+			}
 			logger.Error("      Upload Failed: %v", err)
 			errors++
 			continue
@@ -187,6 +206,8 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		successfulMoves = append(successfulMoves, task.LocalPath)
 		logger.Debug("      Success! %d chunks uploaded", len(chunks))
 	}
+
+	pm.Wait()
 
 	logger.Success("=> Upload Summary: %d Uploaded, %d Skipped, %d Errors", uploaded, skipped, errors)
 

@@ -12,6 +12,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
+	"github.com/teleman-cli/teleman/internal/progress"
 )
 
 // fileTask is a local struct used by the copy pipeline.
@@ -90,8 +91,25 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			return fmt.Errorf("failed to initialize %s stream: %v", archiveLabel, err)
 		}
 
-		chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(vPath), r, opts.Password, opts.Caption)
+		pm := progress.NewManager(ctx, 1, "Archiving")
+		defer pm.Wait()
+
+		// For streaming archives, we might not know the final size in advance, so we pass 0
+		// and it functions as a simple byte counter.
+		bar := pm.AddFileBar(vPath, 0)
+		readerProxy := pm.ProxyReader(r, bar)
+
+		chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(vPath), readerProxy, opts.Password, opts.Caption)
+
+		if rc, ok := readerProxy.(interface{ Close() error }); ok {
+			rc.Close()
+		}
+		pm.IncrementOverall()
+
 		if err != nil {
+			if bar != nil {
+				bar.Abort(true)
+			}
 			return fmt.Errorf("upload failed: %v", err)
 		}
 
@@ -285,7 +303,8 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 	var idxMutex sync.Mutex
 	var uploaded atomic.Int32
 	var uploadErrors atomic.Int32
-	totalToUpload := int32(len(uploadList))
+
+	pm := progress.NewManager(ctx, len(uploadList), "Copying")
 
 	for i := 0; i < opts.Transfers; i++ {
 		wgTransfer.Add(1)
@@ -298,19 +317,37 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 				default:
 				}
 
-				current := uploaded.Add(1)
-				logger.Info("[%d/%d] %s (%d bytes)", current, totalToUpload, task.virtualPath, task.fileInfo.Size())
+				uploaded.Add(1)
+
+				if !pm.IsTTY() {
+					// Fallback to simpler logs if no TTY
+					logger.Info("[%d/%d] %s (%d bytes)", uploaded.Load(), len(uploadList), task.virtualPath, task.fileInfo.Size())
+				}
 
 				f, err := os.Open(task.localPath)
 				if err != nil {
 					logger.Error("      Error: %v", err)
 					uploadErrors.Add(1)
+					pm.IncrementOverall()
 					continue
 				}
 
-				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.virtualPath), f, opts.Password, opts.Caption)
-				f.Close()
+				bar := pm.AddFileBar(task.virtualPath, task.fileInfo.Size())
+				readerProxy := pm.ProxyReader(f, bar)
+
+				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.virtualPath), readerProxy, opts.Password, opts.Caption)
+
+				// Ensure proxy reader wraps things up nicely
+				if rc, ok := readerProxy.(interface{ Close() error }); ok {
+					rc.Close()
+				}
+
+				pm.IncrementOverall()
+
 				if err != nil {
+					if bar != nil {
+						bar.Abort(true)
+					}
 					logger.Error("      Upload Failed: %v", err)
 					uploadErrors.Add(1)
 					continue
@@ -334,6 +371,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 	}
 	close(transferChan)
 	wgTransfer.Wait()
+	pm.Wait()
 
 	if ctx.Err() != nil {
 		logger.Warn("=> Copy interrupted. Saving partial progress...")

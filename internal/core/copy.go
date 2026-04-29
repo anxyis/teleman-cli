@@ -90,7 +90,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			return fmt.Errorf("failed to initialize %s stream: %v", archiveLabel, err)
 		}
 
-		chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(vPath), r, opts.Password)
+		chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(vPath), r, opts.Password, opts.Caption)
 		if err != nil {
 			return fmt.Errorf("upload failed: %v", err)
 		}
@@ -308,7 +308,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 					continue
 				}
 
-				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.virtualPath), f, opts.Password)
+				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.virtualPath), f, opts.Password, opts.Caption)
 				f.Close()
 				if err != nil {
 					logger.Error("      Upload Failed: %v", err)

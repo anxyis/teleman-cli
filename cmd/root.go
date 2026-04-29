@@ -272,6 +272,7 @@ var (
 	verbose          bool
 	quiet            bool
 	downloadPassword string
+	caption          string
 )
 
 // buildTransferOptions converts CLI flags into a TransferOptions struct.
@@ -311,6 +312,7 @@ func buildTransferOptions(cmd *cobra.Command) (*models.TransferOptions, error) {
 		DryRun:           dryRun,
 		Password:         password,
 		AutoUpgradeChunk: cmd != nil && !cmd.Flags().Changed("cz"),
+		Caption:          caption,
 	}, nil
 }
 
@@ -368,6 +370,7 @@ func addTransferFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force re-upload of existing files")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be transferred without making changes")
 	cmd.Flags().StringVar(&downloadPassword, "password", "", "Encryption password (prefer TELEMAN_PASSWORD env var)")
+	cmd.Flags().StringVar(&caption, "caption", "", "Custom caption string or 'auto' for auto-generated caption")
 }
 
 func init() {

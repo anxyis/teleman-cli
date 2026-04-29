@@ -176,7 +176,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 					continue
 				}
 
-				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.VirtualPath), f, s.opts.Password)
+				chunks, err := engine.ProcessStreamCtx(ctx, tctx.Target.ChatID, tctx.Target.ThreadID, filepath.Base(task.VirtualPath), f, s.opts.Password, s.opts.Caption)
 				f.Close()
 				if err != nil {
 					logger.Error("      [Error] Upload Failed for %s: %v", task.VirtualPath, err)

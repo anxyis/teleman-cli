@@ -4,20 +4,20 @@ This guide provides detailed instructions on how to install and set up Teleman o
 
 ## 🪟 Windows Installation & Updating {#windows}
 
-You can install or update to the latest version with a single command in PowerShell. It will automatically download the binary and add it to your PATH.
+You can install or update to the latest version with a single command in PowerShell. It will automatically download the binary and add it to your PATH. Since the repository is private, this uses the GitHub CLI (`gh`) which must be installed and authenticated.
 
 ```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/install.ps1" -UseBasicParsing | Invoke-Expression
+gh api -H "Accept: application/vnd.github.v3.raw" /repos/anxyis/teleman-cli/contents/scripts/install.ps1 | Invoke-Expression
 ```
 
 *(Alternatively, you can manually download `teleman-windows-amd64.exe` from the [Releases](https://github.com/anxyis/teleman-cli/releases) page and place it in your PATH).*
 
 ## 🐧 Linux Installation & Updating {#linux}
 
-You can install or update to the latest version by running this script. It will download the binary and place it in `/usr/local/bin` (requires `sudo` if not run as root).
+You can install or update to the latest version by running this script. It will download the binary and place it in `/usr/local/bin` (requires `sudo` if not run as root). Since the repository is private, this uses the GitHub CLI (`gh`) which must be installed and authenticated.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/install.sh | bash
+gh api -H "Accept: application/vnd.github.v3.raw" /repos/anxyis/teleman-cli/contents/scripts/install.sh | bash
 ```
 
 *(Alternatively, download the `teleman-linux-amd64` binary manually from [Releases](https://github.com/anxyis/teleman-cli/releases) and move it to `/usr/local/bin/teleman`)*
@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/ins
 In Termux, use the exact same script as Linux. It will automatically detect Termux and install the ARM64 version to your `$PREFIX/bin` without needing `sudo`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/install.sh | bash
+gh api -H "Accept: application/vnd.github.v3.raw" /repos/anxyis/teleman-cli/contents/scripts/install.sh | bash
 ```
 
 *(Alternatively, download the `teleman-linux-arm64` binary manually from [Releases](https://github.com/anxyis/teleman-cli/releases) and move it to `$PREFIX/bin/teleman`)*

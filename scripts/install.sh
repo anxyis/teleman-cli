@@ -41,28 +41,17 @@ else
     fi
 fi
 
-# Fetch latest release URL
-echo "Fetching latest release information..."
-if command -v curl >/dev/null 2>&1; then
-    LATEST_RELEASE_URL=$(curl -s "https://api.github.com/repos/$REPO/releases/latest" | grep "browser_download_url.*$TARGET\"" | cut -d : -f 2,3 | tr -d \" | xargs)
-elif command -v wget >/dev/null 2>&1; then
-    LATEST_RELEASE_URL=$(wget -qO- "https://api.github.com/repos/$REPO/releases/latest" | grep "browser_download_url.*$TARGET\"" | cut -d : -f 2,3 | tr -d \" | xargs)
-else
-    echo "Error: curl or wget is required."
-    exit 1
-fi
-
-if [ -z "$LATEST_RELEASE_URL" ]; then
-    echo "Error: Could not find download URL for $TARGET in the latest release."
+# Ensure GitHub CLI is installed
+if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: GitHub CLI (gh) is required."
+    echo "Please install it: https://cli.github.com/"
     exit 1
 fi
 
 echo "Downloading $TARGET..."
-if command -v curl >/dev/null 2>&1; then
-    curl -L -o teleman_tmp "$LATEST_RELEASE_URL"
-else
-    wget -qO teleman_tmp "$LATEST_RELEASE_URL"
-fi
+# Download the asset via gh to handle private repo auth
+gh release download -R "$REPO" -p "$TARGET" --clobber -D .
+mv "$TARGET" teleman_tmp
 chmod +x teleman_tmp
 
 echo "Installing to $INSTALL_DIR/teleman..."

@@ -3,17 +3,11 @@ $ErrorActionPreference = 'Stop'
 $repo = "anxyis/teleman-cli"
 $target = "teleman-windows-amd64.exe"
 
-Write-Host "Fetching latest release information..."
-$releaseUrl = "https://api.github.com/repos/$repo/releases/latest"
-$release = Invoke-RestMethod -Uri $releaseUrl
-$asset = $release.assets | Where-Object { $_.name -eq $target }
-
-if (-not $asset) {
-    Write-Error "Could not find download URL for $target in the latest release."
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    Write-Error "GitHub CLI (gh) is required but not installed. Please install it from https://cli.github.com/"
     exit 1
 }
 
-$downloadUrl = $asset.browser_download_url
 $installDir = Join-Path $env:USERPROFILE ".teleman\bin"
 
 if (-not (Test-Path $installDir)) {
@@ -22,7 +16,10 @@ if (-not (Test-Path $installDir)) {
 
 $exePath = Join-Path $installDir "teleman.exe"
 
-Write-Host "Downloading $target..."
+Write-Host "Downloading $target via GitHub CLI..."
+$tempDownloadPath = Join-Path $env:TEMP $target
+gh release download -R $repo -p $target --clobber -D $env:TEMP
+
 # If teleman.exe is running, overwriting might fail.
 # We try to rename the existing one to .old first.
 if (Test-Path $exePath) {
@@ -33,7 +30,7 @@ if (Test-Path $exePath) {
     Rename-Item $exePath "teleman.exe.old" -Force -ErrorAction SilentlyContinue
 }
 
-Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath
+Move-Item -Path $tempDownloadPath -Destination $exePath -Force
 
 # Check if installDir is in PATH
 $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")

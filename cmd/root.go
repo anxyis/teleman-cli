@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sort"
@@ -434,6 +435,40 @@ var deleteCmd = &cobra.Command{
 	},
 }
 
+var messageCmd = &cobra.Command{
+	Use:   "message [target_alias]: [text]",
+	Short: "Send a plain text message to a target chat",
+	Args:  cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		targetRaw := args[0]
+		var text string
+
+		if len(args) == 2 {
+			text = args[1]
+		} else {
+			// Read from stdin if no text argument is provided
+			fi, err := os.Stdin.Stat()
+			if err != nil {
+				return err
+			}
+			if (fi.Mode() & os.ModeCharDevice) == 0 {
+				bytes, err := io.ReadAll(os.Stdin)
+				if err != nil {
+					return fmt.Errorf("error reading stdin: %v", err)
+				}
+				text = string(bytes)
+			}
+		}
+
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return fmt.Errorf("no message content provided")
+		}
+
+		return core.RunMessage(globalCtx, targetRaw, text, quiet)
+	},
+}
+
 var purgeCmd = &cobra.Command{
 	Use:   "purge [target_alias]:[path]",
 	Short: "Recursively delete files and directories under a target path",
@@ -598,6 +633,7 @@ func init() {
 	rootCmd.AddCommand(treeCmd)
 	rootCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(purgeCmd)
+	rootCmd.AddCommand(messageCmd)
 
 	treeCmd.Flags().IntVar(&treeDepth, "depth", 0, "Maximum depth to display (0 for unlimited)")
 

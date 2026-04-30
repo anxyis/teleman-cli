@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -590,6 +592,28 @@ func isTerminal() bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
+var updateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update Teleman to the latest version",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println("Checking for updates via GitHub CLI...")
+		var c *exec.Cmd
+		if runtime.GOOS == "windows" {
+			script := `gh release download -R anxyis/teleman-cli -p "install.ps1" -O - | Out-String | iex`
+			c = exec.Command("powershell", "-Command", script)
+		} else {
+			script := `gh release download -R anxyis/teleman-cli -p "install.sh" -O - | bash`
+			c = exec.Command("sh", "-c", script)
+		}
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		if err := c.Run(); err != nil {
+			return fmt.Errorf("update failed: %v\nEnsure 'gh' is installed and authenticated", err)
+		}
+		return nil
+	},
+}
+
 func addCommonFlags(cmd *cobra.Command) {
 	cmd.Flags().IntVarP(&transfers, "transfers", "t", 4, "Number of concurrent upload/download workers (network bound).\nRecommended: 2 (small), 4 (balanced), 8 (high perf)")
 	cmd.Flags().IntVarP(&checkers, "checkers", "c", 8, "Number of concurrent file scanning workers (CPU/disk bound).\nRecommended: 4 (small), 8 (balanced), 16 (high perf)")
@@ -637,6 +661,7 @@ func init() {
 	rootCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(purgeCmd)
 	rootCmd.AddCommand(messageCmd)
+	rootCmd.AddCommand(updateCmd)
 
 	treeCmd.Flags().IntVar(&treeDepth, "depth", 0, "Maximum depth to display (0 for unlimited)")
 

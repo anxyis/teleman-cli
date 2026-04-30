@@ -2,49 +2,35 @@
 
 This guide provides detailed instructions on how to install and set up Teleman on various platforms.
 
-## 🪟 Windows Installation {#windows}
+## 🪟 Windows Installation & Updating {#windows}
 
-The easiest way to use Teleman on Windows is to download the pre-compiled binary.
+You can install or update to the latest version with a single command in PowerShell. It will automatically download the binary and add it to your PATH.
 
-1.  **Download**: Get the `teleman-windows-amd64.exe` from the [Releases](https://github.com/anxyis/teleman-cli/releases) page.
-2.  **Rename (Optional)**: Rename the file to `teleman.exe` for easier use.
-3.  **Path**: Move it to a folder that is in your System PATH (e.g., `C:\Windows\System32` or a custom tools folder).
-4.  **Verify**: Open PowerShell or Command Prompt and run:
-    ```powershell
-    teleman --version
-    ```
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/install.ps1" -UseBasicParsing | Invoke-Expression
+```
 
-## 🐧 Linux Installation {#linux}
+*(Alternatively, you can manually download `teleman-windows-amd64.exe` from the [Releases](https://github.com/anxyis/teleman-cli/releases) page and place it in your PATH).*
 
-1.  **Download**: Get the `teleman-linux-amd64` from the [Releases](https://github.com/anxyis/teleman-cli/releases) page.
-2.  **Permissions**: Make the binary executable:
-    ```bash
-    chmod +x teleman-linux-amd64
-    ```
-3.  **Install**: Move it to your local bin directory:
-    ```bash
-    sudo mv teleman-linux-amd64 /usr/local/bin/teleman
-    ```
-4.  **Verify**:
-    ```bash
-    teleman --version
-    ```
+## 🐧 Linux Installation & Updating {#linux}
 
-## 📱 Termux (Android) Installation {#termux}
+You can install or update to the latest version by running this script. It will download the binary and place it in `/usr/local/bin` (requires `sudo` if not run as root).
 
-1.  **Download**: Get the `teleman-linux-arm64` from the [Releases](https://github.com/anxyis/teleman-cli/releases) page.
-2.  **Permissions**:
-    ```bash
-    chmod +x teleman-linux-arm64
-    ```
-3.  **Install**:
-    ```bash
-    mv teleman-linux-arm64 $PREFIX/bin/teleman
-    ```
-4.  **Verify**:
-    ```bash
-    teleman --version
-    ```
+```bash
+curl -fsSL https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/install.sh | bash
+```
+
+*(Alternatively, download the `teleman-linux-amd64` binary manually from [Releases](https://github.com/anxyis/teleman-cli/releases) and move it to `/usr/local/bin/teleman`)*
+
+## 📱 Termux (Android) Installation & Updating {#termux}
+
+In Termux, use the exact same script as Linux. It will automatically detect Termux and install the ARM64 version to your `$PREFIX/bin` without needing `sudo`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/install.sh | bash
+```
+
+*(Alternatively, download the `teleman-linux-arm64` binary manually from [Releases](https://github.com/anxyis/teleman-cli/releases) and move it to `$PREFIX/bin/teleman`)*
 
 ---
 

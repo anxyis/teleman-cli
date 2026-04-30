@@ -1,0 +1,50 @@
+$ErrorActionPreference = 'Stop'
+
+$repo = "anxyis/teleman-cli"
+$target = "teleman-windows-amd64.exe"
+
+Write-Host "Fetching latest release information..."
+$releaseUrl = "https://api.github.com/repos/$repo/releases/latest"
+$release = Invoke-RestMethod -Uri $releaseUrl
+$asset = $release.assets | Where-Object { $_.name -eq $target }
+
+if (-not $asset) {
+    Write-Error "Could not find download URL for $target in the latest release."
+    exit 1
+}
+
+$downloadUrl = $asset.browser_download_url
+$installDir = Join-Path $env:USERPROFILE ".teleman\bin"
+
+if (-not (Test-Path $installDir)) {
+    New-Item -ItemType Directory -Path $installDir | Out-Null
+}
+
+$exePath = Join-Path $installDir "teleman.exe"
+
+Write-Host "Downloading $target..."
+# If teleman.exe is running, overwriting might fail.
+# We try to rename the existing one to .old first.
+if (Test-Path $exePath) {
+    $oldPath = "$exePath.old"
+    if (Test-Path $oldPath) {
+        Remove-Item $oldPath -Force -ErrorAction SilentlyContinue
+    }
+    Rename-Item $exePath "teleman.exe.old" -Force -ErrorAction SilentlyContinue
+}
+
+Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath
+
+# Check if installDir is in PATH
+$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ($userPath -notmatch [regex]::Escape($installDir)) {
+    Write-Host "Adding $installDir to User PATH..."
+    $newPath = "$installDir;$userPath"
+    [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+    # Also update current session PATH
+    $env:PATH = "$installDir;$env:PATH"
+    Write-Host "Please restart your terminal to ensure the new PATH is fully applied." -ForegroundColor Yellow
+}
+
+Write-Host "Teleman installed/updated successfully to $exePath!" -ForegroundColor Green
+Write-Host "Run 'teleman --help' to get started."

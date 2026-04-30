@@ -23,21 +23,32 @@ fi
 
 # Determine install path
 INSTALL_DIR="/usr/local/bin"
+SUDO=""
+
 if [ -n "$PREFIX" ] && [ -d "$PREFIX/bin" ]; then
     # Termux
     INSTALL_DIR="$PREFIX/bin"
-    SUDO=""
-else
-    # Linux (requires sudo if not root and writing to /usr/local/bin)
-    if [ "$(id -u)" -ne 0 ]; then
+elif command -v teleman >/dev/null 2>&1; then
+    # Overwrite existing installation
+    EXISTING_PATH=$(command -v teleman)
+    INSTALL_DIR=$(dirname "$EXISTING_PATH")
+    if [ ! -w "$INSTALL_DIR" ]; then
         if command -v sudo >/dev/null 2>&1; then
             SUDO="sudo"
         else
-            echo "Error: sudo is required to install to $INSTALL_DIR"
+            echo "Error: Write permission denied for $INSTALL_DIR and sudo is not available."
             exit 1
         fi
-    else
-        SUDO=""
+    fi
+else
+    # Default Linux
+    if [ ! -w "$INSTALL_DIR" ]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+        else
+            echo "Error: Write permission denied for $INSTALL_DIR and sudo is not available."
+            exit 1
+        fi
     fi
 fi
 
@@ -53,7 +64,7 @@ LATEST_TAG=$(gh release view -R "$REPO" --json tagName -q .tagName 2>/dev/null |
 
 if [ -n "$LATEST_TAG" ]; then
     if command -v teleman >/dev/null 2>&1; then
-        LOCAL_VERSION=$(teleman --version | awk '{print $3}')
+        LOCAL_VERSION=$(teleman --version 2>/dev/null | awk '{print $3}' || echo "unknown")
         if [ "$LOCAL_VERSION" = "$LATEST_TAG" ]; then
             echo "Teleman is already up-to-date ($LOCAL_VERSION). Skipping update."
             exit 0

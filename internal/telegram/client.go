@@ -402,6 +402,76 @@ func (c *Client) SendMediaCtx(ctx context.Context, chatID string, threadID strin
 	return "", 0, fmt.Errorf("max retries exceeded")
 }
 
+// SendMessage sends a text message to a chat.
+func (c *Client) SendMessage(chatID string, threadID string, text string) (int64, error) {
+	return c.SendMessageCtx(context.Background(), chatID, threadID, text)
+}
+
+// SendMessageCtx sends a text message with context support.
+func (c *Client) SendMessageCtx(ctx context.Context, chatID string, threadID string, text string) (int64, error) {
+	url := fmt.Sprintf("%s/bot%s/sendMessage", c.APIHost, c.Token)
+
+	payload := map[string]string{
+		"chat_id": chatID,
+		"text":    text,
+	}
+	if threadID != "" {
+		payload["message_thread_id"] = threadID
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	for attempt := 0; attempt < 5; attempt++ {
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return 0, fmt.Errorf("operation cancelled: %w", ctx.Err())
+			}
+			return 0, err
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			err = c.handleRateLimit(resp)
+			resp.Body.Close()
+			if err != nil && attempt == 4 {
+				return 0, fmt.Errorf("rate limited after %d attempts", attempt+1)
+			}
+			continue
+		}
+
+		var result struct {
+			Ok     bool `json:"ok"`
+			Result struct {
+				MessageID int64 `json:"message_id"`
+			} `json:"result"`
+			Desc string `json:"description"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+
+		if err != nil {
+			return 0, err
+		}
+
+		if !result.Ok {
+			return 0, fmt.Errorf("Telegram API Error: %s", result.Desc)
+		}
+
+		return result.Result.MessageID, nil
+	}
+	return 0, fmt.Errorf("max retries exceeded")
+}
+
 // GetFile requests file metadata (specifically the path) needed for download
 func (c *Client) GetFile(fileID string) (string, error) {
 	return c.GetFileCtx(context.Background(), fileID)

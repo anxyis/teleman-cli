@@ -7,7 +7,7 @@ This guide provides detailed instructions on how to install and set up Teleman o
 You can install or update to the latest version with a single command in PowerShell. It will automatically download the binary and add it to your PATH. Since the repository is private, this uses the GitHub CLI (`gh`) which must be installed and authenticated.
 
 ```powershell
-gh api -H "Accept: application/vnd.github.v3.raw" /repos/anxyis/teleman-cli/contents/scripts/install.ps1 | Invoke-Expression
+gh api -H "Accept: application/vnd.github.v3.raw" /repos/anxyis/teleman-cli/contents/scripts/install.ps1 | Out-String | Invoke-Expression
 ```
 
 *(Alternatively, you can manually download `teleman-windows-amd64.exe` from the [Releases](https://github.com/anxyis/teleman-cli/releases) page and place it in your PATH).*

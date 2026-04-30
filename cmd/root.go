@@ -22,6 +22,8 @@ import (
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
+const AppVersion = "v1.1.0"
+
 // Global context with cancellation — wired to SIGINT/SIGTERM for graceful shutdown.
 // All long-running operations check this context between iterations.
 var (
@@ -30,9 +32,10 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "teleman",
-	Short: "Teleman is a high-performance Telegram-based file syncer.",
-	Long:  `A fast and flexible file transfer utility utilizing a self-hosted Telegram Bot API as an Object Store.`,
+	Use:     "teleman",
+	Short:   "Teleman is a high-performance Telegram-based file syncer.",
+	Long:    `A fast and flexible file transfer utility utilizing a self-hosted Telegram Bot API as an Object Store.`,
+	Version: AppVersion,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		logger.Init(verbose, quiet)
 	},

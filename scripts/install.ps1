@@ -16,6 +16,30 @@ if (-not (Test-Path $installDir)) {
 
 $exePath = Join-Path $installDir "teleman.exe"
 
+Write-Host "Checking for latest release..."
+$latestTag = ""
+try {
+    $latestTagJson = gh release view -R $repo --json tagName | ConvertFrom-Json
+    $latestTag = $latestTagJson.tagName
+} catch {
+    # Ignore error if we can't fetch it
+}
+
+if ($latestTag) {
+    if (Get-Command teleman -ErrorAction SilentlyContinue) {
+        $localVersionOutput = teleman --version
+        # Expected output: "teleman version v1.1.0"
+        if ($localVersionOutput -match "version (v\d+\.\d+\.\d+)") {
+            $localVersion = $matches[1]
+            if ($localVersion -eq $latestTag) {
+                Write-Host "Teleman is already up-to-date ($localVersion). Skipping update." -ForegroundColor Green
+                exit 0
+            }
+        }
+    }
+    Write-Host "Updating to $latestTag..."
+}
+
 Write-Host "Downloading $target via GitHub CLI..."
 $tempDownloadPath = Join-Path $env:TEMP $target
 gh release download -R $repo -p $target --clobber -D $env:TEMP
@@ -43,5 +67,9 @@ if ($userPath -notmatch [regex]::Escape($installDir)) {
     Write-Host "Please restart your terminal to ensure the new PATH is fully applied." -ForegroundColor Yellow
 }
 
-Write-Host "Teleman installed/updated successfully to $exePath!" -ForegroundColor Green
+if ($latestTag) {
+    Write-Host "Teleman installed/updated successfully to $latestTag at $exePath!" -ForegroundColor Green
+} else {
+    Write-Host "Teleman installed/updated successfully to $exePath!" -ForegroundColor Green
+}
 Write-Host "Run 'teleman --help' to get started."

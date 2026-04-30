@@ -48,6 +48,20 @@ if ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 
+echo "Checking for latest release..."
+LATEST_TAG=$(gh release view -R "$REPO" --json tagName -q .tagName 2>/dev/null || echo "")
+
+if [ -n "$LATEST_TAG" ]; then
+    if command -v teleman >/dev/null 2>&1; then
+        LOCAL_VERSION=$(teleman --version | awk '{print $3}')
+        if [ "$LOCAL_VERSION" = "$LATEST_TAG" ]; then
+            echo "Teleman is already up-to-date ($LOCAL_VERSION). Skipping update."
+            exit 0
+        fi
+    fi
+    echo "Updating to $LATEST_TAG..."
+fi
+
 echo "Downloading $TARGET..."
 # Download the asset via gh to handle private repo auth
 gh release download -R "$REPO" -p "$TARGET" --clobber -D .

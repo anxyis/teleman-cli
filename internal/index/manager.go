@@ -53,6 +53,43 @@ func (m *Manager) AcquireLock(owner, operation string) error {
 		Operation: operation,
 	}
 
+	// Read channel history to check for existing locks
+	updates, err := m.client.GetUpdates()
+	if err == nil {
+		for _, update := range updates {
+			var msg map[string]interface{}
+			if post, ok := update["channel_post"].(map[string]interface{}); ok {
+				msg = post
+			} else if m, ok := update["message"].(map[string]interface{}); ok {
+				msg = m
+			}
+			if msg != nil {
+				if doc, ok := msg["document"].(map[string]interface{}); ok {
+					if fileName, ok := doc["file_name"].(string); ok && fileName == "teleman.lock.json" {
+						fileID := doc["file_id"].(string)
+						filePath, err := m.client.GetFile(fileID)
+						if err == nil {
+							stream, err := m.client.DownloadFileStream(filePath)
+							if err == nil {
+								var existingLock models.LockInfo
+								json.NewDecoder(stream).Decode(&existingLock)
+								stream.Close()
+								if !existingLock.IsStale() {
+									return fmt.Errorf("active lock held by %s (op: %s)", existingLock.Owner, existingLock.Operation)
+								} else {
+									if msgID, ok := msg["message_id"].(float64); ok {
+										m.client.DeleteMessage(m.indexChannel, int64(msgID))
+										logger.Warn("   [Lock] Broken stale lock from %s", existingLock.Owner)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	lockData, err := json.Marshal(lockInfo)
 	if err != nil {
 		return fmt.Errorf("failed to serialize lock info: %v", err)
@@ -63,13 +100,13 @@ func (m *Manager) AcquireLock(owner, operation string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create lock file: %v", err)
 	}
+	defer tmp.Close()
 	defer os.Remove(tmp.Name())
 
 	tmp.Write(lockData)
 	tmp.Seek(0, io.SeekStart)
 
 	_, msgID, err := m.client.SendDocument(m.indexChannel, "", "teleman.lock.json", tmp, "")
-	tmp.Close()
 	if err != nil {
 		return fmt.Errorf("failed to send lock message: %v", err)
 	}
@@ -107,31 +144,105 @@ func (m *Manager) PushVersion(idx *models.Index) error {
 	if err != nil {
 		return err
 	}
+	defer tmp.Close()
 	defer os.Remove(tmp.Name())
 	tmp.Write(data)
 	tmp.Seek(0, io.SeekStart)
 
 	// Upload
-	_, _, err = m.client.SendDocument(m.indexChannel, "", "teleman.index.json", tmp, "")
+	_, newMsgID, err := m.client.SendDocument(m.indexChannel, "", "teleman.index.json", tmp, "")
 
 	// Write to local cache so next run maintains state
 	if err == nil {
 		os.WriteFile(m.localCache, data, 0644)
+
+		// Fetch last messages to retain only 5
+		updates, uErr := m.client.GetUpdates()
+		if uErr == nil {
+			var indexMsgs []int64
+			for _, update := range updates {
+				var msg map[string]interface{}
+				if post, ok := update["channel_post"].(map[string]interface{}); ok {
+					msg = post
+				} else if m, ok := update["message"].(map[string]interface{}); ok {
+					msg = m
+				}
+				if msg != nil {
+					if doc, ok := msg["document"].(map[string]interface{}); ok {
+						if fileName, ok := doc["file_name"].(string); ok && fileName == "teleman.index.json" {
+							if msgID, ok := msg["message_id"].(float64); ok {
+								indexMsgs = append(indexMsgs, int64(msgID))
+							}
+						}
+					}
+				}
+			}
+			// Keep the last 5
+			if len(indexMsgs) > 5 {
+				for i := 0; i < len(indexMsgs)-5; i++ {
+					if indexMsgs[i] != newMsgID {
+						m.client.DeleteMessage(m.indexChannel, indexMsgs[i])
+					}
+				}
+			}
+		}
 	}
 
-	// TODO: fetch last 5 messages, delete older versions to retain only 'n'.
 	return err
 }
 
 // Load fetches the index or loads from cache if sha matches.
 func (m *Manager) Load() (*models.Index, error) {
-	// In reality we'd fetch the latest message, get its file_id, check cache hash.
-	// For now, load local
-	data, err := os.ReadFile(m.localCache)
-	if err != nil {
-		// return empty index if not exists
-		return &models.Index{Version: 1, Targets: make(map[string]map[string]*models.FileEntry)}, nil
+	updates, err := m.client.GetUpdates()
+	var latestFileID string
+	if err == nil {
+		for _, update := range updates {
+			var msg map[string]interface{}
+			if post, ok := update["channel_post"].(map[string]interface{}); ok {
+				msg = post
+			} else if m, ok := update["message"].(map[string]interface{}); ok {
+				msg = m
+			}
+			if msg != nil {
+				if doc, ok := msg["document"].(map[string]interface{}); ok {
+					if fileName, ok := doc["file_name"].(string); ok && fileName == "teleman.index.json" {
+						if fileID, ok := doc["file_id"].(string); ok {
+							latestFileID = fileID
+						}
+					}
+				}
+			}
+		}
 	}
+
+	var data []byte
+	var readErr error
+
+	if latestFileID != "" {
+		filePath, fErr := m.client.GetFile(latestFileID)
+		if fErr == nil {
+			stream, sErr := m.client.DownloadFileStream(filePath)
+			if sErr == nil {
+				data, readErr = io.ReadAll(stream)
+				stream.Close()
+				if readErr == nil {
+					os.WriteFile(m.localCache, data, 0644)
+				}
+			} else {
+				readErr = sErr
+			}
+		} else {
+			readErr = fErr
+		}
+	}
+
+	if readErr != nil || latestFileID == "" {
+		data, err = os.ReadFile(m.localCache)
+		if err != nil {
+			return &models.Index{Version: 1, Targets: make(map[string]map[string]*models.FileEntry)}, nil
+		}
+	}
+
 	var idx models.Index
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, err

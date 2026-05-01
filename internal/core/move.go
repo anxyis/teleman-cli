@@ -241,6 +241,9 @@ commit:
 	}
 
 	logger.Success("=> Move operation completed: %d files transferred, %d source files removed.", uploaded+skipped, len(successfulMoves)-deleteErrors)
+	if errors > 0 {
+		return fmt.Errorf("completed with %d upload errors", errors)
+	}
 	return nil
 }
 

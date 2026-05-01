@@ -236,5 +236,8 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 	}
 
 	logger.Success("=> Sync operation completed successfully.")
+	if errors.Load() > 0 {
+		return fmt.Errorf("completed with %d upload errors", errors.Load())
+	}
 	return nil
 }

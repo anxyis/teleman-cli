@@ -629,3 +629,32 @@ func (c *Client) GetChat(chatID string) error {
 
 	return nil
 }
+
+// GetUpdates fetches recent updates (channel posts, messages).
+func (c *Client) GetUpdates() ([]map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/bot%s/getUpdates?allowed_updates=[\"channel_post\",\"message\"]", c.APIHost, c.Token)
+	resp, err := c.HTTPClient.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if err := c.handleRateLimit(resp); err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Ok     bool                     `json:"ok"`
+		Result []map[string]interface{} `json:"result"`
+		Desc   string                   `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	if !result.Ok {
+		return nil, fmt.Errorf("Telegram API Error: %s", result.Desc)
+	}
+
+	return result.Result, nil
+}

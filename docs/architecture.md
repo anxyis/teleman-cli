@@ -24,11 +24,11 @@ Teleman leverages an advanced streaming logic to split large files seamlessly in
 ### 3. Dedicated Index Channel & Locking
 Because the Metadata Index is the heart of your filesystem, we ensure data integrity via **Distributed Locking.**
 - When you execute `teleman config`, you must supply a **Dedicated Index Channel**. 
-- Whenever `teleman sync`, `teleman copy`, or `teleman move` spins up, it first places a secure **Lock Message** in this channel containing owner identification and a UTC timestamp.
-- If another machine executing Teleman attempts to sync concurrently to the same targets, it will cleanly abort, preventing split-brain database corruption.
-- **Stale Lock Recovery:** If a lock is older than 5 minutes (configurable via `DefaultLockTimeout`), it is automatically considered stale and eligible for recovery. This prevents permanent deadlocks when an instance crashes while holding the lock.
-- All locks are released via `defer` — even on Ctrl+C interruptions, the lock cleanup fires because commands use `RunE` error returns instead of `os.Exit(1)`.
-- Teleman versions your configuration updates and stores the last 5 Index versions natively inside the channel for robust disaster recovery.
+- **Active Channel Polling:** Teleman reads the actual channel history via `GetUpdates` to verify distributed state. It does not rely on local file states, preventing split-brain conditions across different devices.
+- Whenever a transfer command spins up, it explicitly checks the channel history for an existing active **Lock Message**. If none exists, it acquires a lock by uploading a new lock JSON containing owner identification and a UTC timestamp.
+- **Stale Lock Recovery:** If a lock found in the channel history is older than 5 minutes, it is automatically considered stale, aggressively broken, and eligible for recovery. This prevents permanent deadlocks when an instance crashes while holding the lock.
+- All locks are released via `defer` — even on Ctrl+C interruptions, the lock cleanup fires reliably because commands use `RunE` error returns instead of `os.Exit(1)`.
+- **Automated Garbage Collection:** Teleman pushes new Index versions to the channel and actively prunes older messages, retaining only the last 5 Index versions to prevent channel history bloat and maintain rapid synchronization speeds.
 
 ### 4. Download & Reassembly Pipeline
 The download path is the strict inverse of the upload pipeline, with explicit corruption safeguards:

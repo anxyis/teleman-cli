@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -24,7 +25,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
-const AppVersion = "v1.1.0"
+const AppVersion = "v1.1.2"
 
 // Global context with cancellation — wired to SIGINT/SIGTERM for graceful shutdown.
 // All long-running operations check this context between iterations.
@@ -597,21 +598,118 @@ var updateCmd = &cobra.Command{
 	Short: "Update Teleman to the latest version",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Checking for updates via GitHub CLI...")
-		var c *exec.Cmd
-		if runtime.GOOS == "windows" {
-			script := `gh release download -R anxyis/teleman-cli -p "install.ps1" -O - | Out-String | iex`
-			c = exec.Command("powershell", "-Command", script)
-		} else {
-			script := `gh release download -R anxyis/teleman-cli -p "install.sh" -O - | bash`
-			c = exec.Command("sh", "-c", script)
+		
+		osName := runtime.GOOS
+		arch := runtime.GOARCH
+		if arch == "x86_64" {
+			arch = "amd64"
+		} else if arch == "aarch64" {
+			arch = "arm64"
 		}
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		if err := c.Run(); err != nil {
-			return fmt.Errorf("update failed: %v\nEnsure 'gh' is installed and authenticated", err)
+		
+		ext := ""
+		if osName == "windows" {
+			ext = ".exe"
 		}
+		
+		targetAsset := fmt.Sprintf("teleman-%s-%s%s", osName, arch, ext)
+		
+		exePath, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("failed to get executable path: %v", err)
+		}
+		
+		if _, err := exec.LookPath("gh"); err != nil {
+			return fmt.Errorf("GitHub CLI (gh) is required. Please install it: https://cli.github.com/")
+		}
+		
+		tagOut, err := exec.Command("gh", "release", "view", "-R", "anxyis/teleman-cli", "--json", "tagName", "-q", ".tagName").Output()
+		if err != nil {
+			return fmt.Errorf("failed to fetch latest release info. Make sure you are authenticated with 'gh auth login'. Error: %v", err)
+		}
+		latestTag := strings.TrimSpace(string(tagOut))
+		
+		if latestTag == AppVersion {
+			fmt.Printf("Teleman is already up-to-date (%s). Skipping update.\n", AppVersion)
+			return nil
+		}
+		
+		fmt.Printf("Updating from %s to %s...\n", AppVersion, latestTag)
+		fmt.Printf("Downloading %s...\n", targetAsset)
+		
+		tmpDir, err := os.MkdirTemp("", "teleman-update-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmpDir)
+		
+		dlCmd := exec.Command("gh", "release", "download", "-R", "anxyis/teleman-cli", "-p", targetAsset, "--clobber", "-D", tmpDir)
+		dlCmd.Stdout = os.Stdout
+		dlCmd.Stderr = os.Stderr
+		if err := dlCmd.Run(); err != nil {
+			return fmt.Errorf("failed to download update asset: %v", err)
+		}
+		
+		newBinaryPath := filepath.Join(tmpDir, targetAsset)
+		if _, err := os.Stat(newBinaryPath); os.IsNotExist(err) {
+			return fmt.Errorf("downloaded asset not found at %s", newBinaryPath)
+		}
+		
+		if osName != "windows" {
+			os.Chmod(newBinaryPath, 0755)
+		}
+		
+		fmt.Printf("Installing to %s...\n", exePath)
+		
+		if osName == "windows" {
+			oldPath := exePath + ".old"
+			os.Remove(oldPath)
+			if err := os.Rename(exePath, oldPath); err != nil {
+				return fmt.Errorf("failed to rename running executable: %v", err)
+			}
+		}
+
+		err = os.Rename(newBinaryPath, exePath)
+		if err != nil {
+			if osName != "windows" && os.IsPermission(err) {
+				fmt.Println("Write permission denied. Attempting to use sudo to install...")
+				mvCmd := exec.Command("sudo", "mv", newBinaryPath, exePath)
+				mvCmd.Stdin = os.Stdin
+				mvCmd.Stdout = os.Stdout
+				mvCmd.Stderr = os.Stderr
+				if err := mvCmd.Run(); err != nil {
+					return fmt.Errorf("sudo installation failed: %v", err)
+				}
+			} else {
+				if copyErr := copyFile(newBinaryPath, exePath); copyErr != nil {
+					return fmt.Errorf("failed to replace executable: %v (original rename err: %v)", copyErr, err)
+				}
+				if osName != "windows" {
+					os.Chmod(exePath, 0755)
+				}
+			}
+		}
+		
+		fmt.Printf("Teleman updated successfully to %s!\n", latestTag)
 		return nil
 	},
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func addCommonFlags(cmd *cobra.Command) {

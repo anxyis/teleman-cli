@@ -253,7 +253,7 @@ func newTarget(cfg *models.Config) error {
 			Name: "type",
 			Prompt: &survey.Select{
 				Message: "Target Type:",
-				Options: []string{"channel", "topic", "user"},
+				Options: []string{"channel/group", "topic", "user"},
 			},
 		},
 		{
@@ -280,12 +280,17 @@ func newTarget(cfg *models.Config) error {
 		return fmt.Errorf("alias '%s' already exists", alias)
 	}
 
-	target := &models.Target{
-		Type:   answers.Type,
-		ChatID: parseChatID(answers.ChatID, answers.Type),
+	actualType := answers.Type
+	if actualType == "channel/group" {
+		actualType = "channel"
 	}
 
-	if answers.Type == "topic" {
+	target := &models.Target{
+		Type:   actualType,
+		ChatID: parseChatID(answers.ChatID, actualType),
+	}
+
+	if actualType == "topic" {
 		var threadID string
 		prompt := &survey.Input{
 			Message: "Message Thread ID (Topic ID):",
@@ -316,6 +321,11 @@ func editTarget(cfg *models.Config) error {
 
 	oldTarget := cfg.Targets[selected]
 
+	defaultType := oldTarget.Type
+	if defaultType == "channel" {
+		defaultType = "channel/group"
+	}
+
 	qs := []*survey.Question{
 		{
 			Name: "alias",
@@ -329,8 +339,8 @@ func editTarget(cfg *models.Config) error {
 			Name: "type",
 			Prompt: &survey.Select{
 				Message: "Target Type:",
-				Options: []string{"channel", "topic", "user"},
-				Default: oldTarget.Type,
+				Options: []string{"channel/group", "topic", "user"},
+				Default: defaultType,
 			},
 		},
 		{
@@ -360,12 +370,17 @@ func editTarget(cfg *models.Config) error {
 		}
 	}
 
-	newTarget := &models.Target{
-		Type:   answers.Type,
-		ChatID: parseChatID(answers.ChatID, answers.Type),
+	actualType := answers.Type
+	if actualType == "channel/group" {
+		actualType = "channel"
 	}
 
-	if answers.Type == "topic" {
+	newTarget := &models.Target{
+		Type:   actualType,
+		ChatID: parseChatID(answers.ChatID, actualType),
+	}
+
+	if actualType == "topic" {
 		var threadID string
 		prompt := &survey.Input{
 			Message: "Message Thread ID (Topic ID):",

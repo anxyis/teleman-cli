@@ -9,6 +9,7 @@ import (
 
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/config"
+	"github.com/teleman-cli/teleman/internal/ignore"
 	"github.com/teleman-cli/teleman/internal/index"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
@@ -100,6 +101,12 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		return fmt.Errorf("source error: %v", err)
 	}
 
+	// Load .telemanignore
+	ignorer := ignore.Load(source)
+	if ignorer.Loaded {
+		logger.Info("=> Using .telemanignore rules")
+	}
+
 	// 6. Collect files to move
 	type moveTask struct {
 		LocalPath string
@@ -109,8 +116,23 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 
 	if info.IsDir() {
 		filepath.Walk(source, func(path string, fi os.FileInfo, err error) error {
-			if err == nil && !fi.IsDir() {
-				rel, _ := filepath.Rel(source, path)
+			if err != nil {
+				return nil
+			}
+			rel, _ := filepath.Rel(source, path)
+			if rel == "." {
+				return nil
+			}
+
+			if ignorer.IsIgnored(rel) {
+				logger.Debug("   [Skipped by ignore] %s", rel)
+				if fi.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			if !fi.IsDir() {
 				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
 				vPath = strings.TrimLeft(vPath, "/")
 				filesToMove = append(filesToMove, moveTask{LocalPath: path, VPath: vPath})
@@ -118,9 +140,14 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			return nil
 		})
 	} else {
-		vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
-		vPath = strings.TrimLeft(vPath, "/")
-		filesToMove = append(filesToMove, moveTask{LocalPath: source, VPath: vPath})
+		rel := filepath.Base(source)
+		if !ignorer.IsIgnored(rel) {
+			vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
+			vPath = strings.TrimLeft(vPath, "/")
+			filesToMove = append(filesToMove, moveTask{LocalPath: source, VPath: vPath})
+		} else {
+			logger.Debug("   [Skipped by ignore] %s", rel)
+		}
 	}
 
 	logger.Step("=> Found %d files to move", len(filesToMove))

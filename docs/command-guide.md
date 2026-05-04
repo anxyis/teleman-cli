@@ -22,19 +22,20 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
    - [Dry Run (Preview Changes)](#dry-run-preview-changes)
 5. [Syncing Files (`sync`)](#5-syncing-files-sync)
 6. [Moving Files (`move`)](#6-moving-files-move)
-7. [Downloading Files (`download`)](#7-downloading-files-download)
+7. [Ignoring Files (`.telemanignore`)](#7-ignoring-files-telemanignore)
+8. [Downloading Files (`download`)](#8-downloading-files-download)
    - [Single Files](#single-file-download)
    - [Whole Directories](#directory-download)
    - [Encrypted Downloads](#encrypted-downloads)
    - [Password Priority](#password-priority)
-8. [Deleting Files (`delete`)](#8-deleting-files-delete)
-9. [Purging Directories (`purge`)](#9-purging-directories-purge)
-10. [Best Performance & Multi-Threading](#10-best-performance--multi-threading)
+9. [Deleting Files (`delete`)](#9-deleting-files-delete)
+10. [Purging Directories (`purge`)](#10-purging-directories-purge)
+11. [Best Performance & Multi-Threading](#11-best-performance--multi-threading)
     - [Tuning for a Local Bot API Server](#tuning-for-a-local-bot-api-server)
     - [Tuning for Telegram's Cloud API](#tuning-for-telegrams-cloud-api)
-11. [Output Control](#11-output-control)
-12. [Common Scenario Recipes](#12-common-scenario-recipes)
-13. [Flag Reference Table](#13-flag-reference-table)
+12. [Output Control](#12-output-control)
+13. [Common Scenario Recipes](#13-common-scenario-recipes)
+14. [Flag Reference Table](#14-flag-reference-table)
 
 ---
 
@@ -287,7 +288,36 @@ teleman move ./Temp/ remote:archive/ --dry-run
 
 ---
 
-## 7. Downloading Files (`download`)
+## 7. Ignoring Files (`.telemanignore`)
+
+Teleman supports excluding files and directories during `copy`, `move`, and `sync` operations using a `.telemanignore` file located in your source directory.
+
+### Key Features:
+- **Fast Skipping:** Folders matching an ignore rule are skipped entirely without scanning their contents.
+- **Ordered Negation:** Use `!` to override an ignore rule (last match wins).
+- **Local Only:** Rules only apply to local source scanning; they do not affect downloads or remote listings.
+
+### Example `.telemanignore`:
+```text
+# Exclude build and dependency directories
+node_modules/
+dist/
+
+# Exclude all logs
+*.log
+
+# BUT include this specific log
+!important.log
+
+# Exclude sensitive file
+secret.txt
+```
+
+> 📖 For full syntax details, see [telemanignore.md](./telemanignore.md).
+
+---
+
+## 8. Downloading Files (`download`)
 
 `download` is the inverse of `copy`. It fetches chunks from Telegram, verifies each chunk's SHA-256 hash, optionally decrypts, and writes to disk atomically. The engine uses a streaming reassembly pipeline that saves chunks directly to temporary files on disk, ensuring memory safety even when handling massive chunks or high concurrency.
 
@@ -343,7 +373,7 @@ See [security.md](./security.md) for full encryption architecture details.
 
 ---
 
-## 8. Deleting Files (`delete`)
+## 9. Deleting Files (`delete`)
 
 The `delete` command removes files from the virtual index and physically deletes the chunks from Telegram. By default, it is **non-recursive** (it only matches files directly in the specified path).
 
@@ -359,7 +389,7 @@ teleman delete backup:reports/
 teleman delete backup:legacy/ --dry-run
 ```
 
-## 9. Purging Directories (`purge`)
+## 10. Purging Directories (`purge`)
 
 The `purge` command is the recursive counterpart to `delete`. It removes everything starting with the virtual path prefix.
 
@@ -381,7 +411,7 @@ teleman purge backup:archive/ -t 16 --confirm
 
 ---
 
-## 10. Performance Tuning
+## 11. Performance Tuning
 
 Teleman exposes two concurrency pools you can tune:
 
@@ -457,7 +487,7 @@ teleman sync ./TestData/ remote:test/ --encrypt -t 8 -c 16 -v
 
 ---
 
-## 9. Output Control & UI
+## 12. Output Control & UI
 
 Teleman features a professional, high-performance console UI designed for clear feedback during massive operations.
 
@@ -482,7 +512,7 @@ teleman sync /home/user/Documents backup:docs/ -t 4 -c 8 -q
 
 ---
 
-## 10. Common Scenario Recipes
+## 13. Common Scenario Recipes
 
 ### Scenario: Nightly automated backup (cron job)
 ```bash
@@ -535,7 +565,7 @@ teleman download backup:projects/my-app/ ./restored/
 
 ---
 
-## 11. Flag Reference Table
+## 14. Flag Reference Table
 
 ### Transfer Flags (`copy`, `sync`, `move`)
 

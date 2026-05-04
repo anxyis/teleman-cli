@@ -87,8 +87,14 @@ teleman move ./Temp/ remote: --dry-run
 ### Sync Files
 Brings your remote destination into identical parity with your local endpoint. *Warning: Sync **will** delete files on the remote destination if they no longer exist on your physical computer.*
 ```bash
-teleman sync ./LocalFolder/ remote:RemoteFolder/
-```
+	teleman sync ./LocalFolder/ remote:RemoteFolder/
+	```
+
+	### Ignoring Files (`.telemanignore`)
+	During any `copy`, `move`, or `sync` operation, you can skip unwanted files or directories by creating a `.telemanignore` file in your source directory.
+	It supports excluding folders (`node_modules/`), extensions (`*.log`), or exact files (`secret.txt`).
+
+	> 📖 For detailed pattern syntax, see [telemanignore.md](./telemanignore.md).
 
 ### Delete Files (`delete`)
 Removes files from the virtual index and Telegram. **Non-recursive** by default (only affects the immediate path).

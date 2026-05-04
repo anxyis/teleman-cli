@@ -93,6 +93,7 @@ The true "file mapping" dictating how all data chunks piece back into original t
 | **[Command Guide](docs/command-guide.md)** | 📘 Full scenario-driven guide with copy-pasteable examples for every command, performance tuning, encryption, media mode, and common recipes |
 | [Installation](docs/installation.md) | 🚀 Step-by-step setup for Windows, Linux, and Termux |
 | [Usage Reference](docs/usage.md) | Quick command overview and flag reference |
+| [Teleman Ignore](docs/telemanignore.md) | 🛑 How to exclude files/folders during sync using `.telemanignore` |
 | [Architecture](docs/architecture.md) | Internals: index design, chunking pipeline, download reassembly, and namespaced isolation |
 | [Release Guide](docs/release.md) | 📦 How to build binaries and create new releases |
 

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/teleman-cli/teleman/internal/chunker"
+	"github.com/teleman-cli/teleman/internal/ignore"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/progress"
@@ -147,12 +148,33 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
 	}
 
+	// Load .telemanignore
+	ignorer := ignore.Load(source)
+	if ignorer.Loaded {
+		logger.Info("=> Using .telemanignore rules")
+	}
+
 	// Collect all source files
 	var allFiles []copyFileTask
 	if info.IsDir() {
 		filepath.Walk(source, func(path string, fi os.FileInfo, err error) error {
-			if err == nil && !fi.IsDir() {
-				rel, _ := filepath.Rel(source, path)
+			if err != nil {
+				return nil
+			}
+			rel, _ := filepath.Rel(source, path)
+			if rel == "." {
+				return nil
+			}
+
+			if ignorer.IsIgnored(rel) {
+				logger.Debug("   [Skipped by ignore] %s", rel)
+				if fi.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			if !fi.IsDir() {
 				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
 				vPath = strings.TrimLeft(vPath, "/")
 				allFiles = append(allFiles, copyFileTask{localPath: path, virtualPath: vPath, fileInfo: fi})
@@ -160,9 +182,14 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 			return nil
 		})
 	} else {
-		vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
-		vPath = strings.TrimLeft(vPath, "/")
-		allFiles = append(allFiles, copyFileTask{localPath: source, virtualPath: vPath, fileInfo: info})
+		rel := filepath.Base(source)
+		if !ignorer.IsIgnored(rel) {
+			vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
+			vPath = strings.TrimLeft(vPath, "/")
+			allFiles = append(allFiles, copyFileTask{localPath: source, virtualPath: vPath, fileInfo: info})
+		} else {
+			logger.Debug("   [Skipped by ignore] %s", rel)
+		}
 	}
 
 	logger.Step("=> Found %d files to sync", len(allFiles))

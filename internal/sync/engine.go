@@ -11,6 +11,7 @@ import (
 
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/core"
+	"github.com/teleman-cli/teleman/internal/ignore"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/progress"
@@ -58,6 +59,12 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 		idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
 	}
 
+	// Load .telemanignore
+	ignorer := ignore.Load(source)
+	if ignorer.Loaded {
+		logger.Info("=> Using .telemanignore rules")
+	}
+
 	// 1. Gather files
 	var localFiles []fileTask
 	info, err := os.Stat(source)
@@ -67,8 +74,23 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 
 	if info.IsDir() {
 		filepath.Walk(source, func(path string, fInfo os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			rel, _ := filepath.Rel(source, path)
+			if rel == "." {
+				return nil
+			}
+
+			if ignorer.IsIgnored(rel) {
+				logger.Debug("   [Skipped by ignore] %s", rel)
+				if fInfo.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
 			if !fInfo.IsDir() {
-				rel, _ := filepath.Rel(source, path)
 				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
 				localFiles = append(localFiles, fileTask{
 					LocalPath:   path,
@@ -79,12 +101,17 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 			return nil
 		})
 	} else {
-		vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
-		localFiles = append(localFiles, fileTask{
-			LocalPath:   source,
-			VirtualPath: strings.TrimLeft(vPath, "/"),
-			FileInfo:    info,
-		})
+		rel := filepath.Base(source)
+		if !ignorer.IsIgnored(rel) {
+			vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
+			localFiles = append(localFiles, fileTask{
+				LocalPath:   source,
+				VirtualPath: strings.TrimLeft(vPath, "/"),
+				FileInfo:    info,
+			})
+		} else {
+			logger.Debug("   [Skipped by ignore] %s", rel)
+		}
 	}
 
 	logger.Step("=> Diffing %d local files against virtual index (Checkers: %d)...", len(localFiles), s.opts.Checkers)

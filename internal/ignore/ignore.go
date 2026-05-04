@@ -72,10 +72,6 @@ func Load(sourceDir string) *Matcher {
 // It iterates through all rules in order. The last matching rule wins.
 // If the last match is a negation (!), the file is NOT ignored.
 func (m *Matcher) IsIgnored(relPath string) bool {
-	if len(m.patterns) == 0 {
-		return false
-	}
-
 	// standardize path to forward slashes
 	relPath = strings.ReplaceAll(relPath, "\\", "/")
 	
@@ -83,7 +79,12 @@ func (m *Matcher) IsIgnored(relPath string) bool {
 	baseName := filepath.Base(relPath)
 	parts := strings.Split(relPath, "/")
 
-	ignored := false
+	// Implicitly ignore .telemanignore itself, unless explicitly negated
+	ignored := (baseName == ".telemanignore")
+
+	if len(m.patterns) == 0 {
+		return ignored
+	}
 
 	for _, p := range m.patterns {
 		match := false

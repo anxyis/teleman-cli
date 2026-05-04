@@ -25,7 +25,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
-const AppVersion = "v1.1.3"
+const AppVersion = "v1.1.4"
 
 // Global context with cancellation — wired to SIGINT/SIGTERM for graceful shutdown.
 // All long-running operations check this context between iterations.

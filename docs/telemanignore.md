@@ -11,6 +11,17 @@ When running an upload or sync operation, Teleman looks for a `.telemanignore` f
 - **Fast Skipping:** Entire directories can be skipped without scanning their contents, making it extremely efficient.
 - **Safety:** Prevents accidental upload of unwanted, temporary, or sensitive files.
 
+## Initialization
+
+You can quickly bootstrap a default `.telemanignore` file in your current directory by running:
+```bash
+teleman ignore init
+```
+This will create a new file pre-filled with common exclusion patterns (like `node_modules/`, `*.log`, `.DS_Store`, etc.). If a `.telemanignore` already exists in the directory, it will be safely ignored unless you explicitly pass the `--force` flag:
+```bash
+teleman ignore init --force
+```
+
 ## Supported Patterns (v1)
 
 In this version (v1), the following pattern types are supported:

@@ -593,6 +593,41 @@ func isTerminal() bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
+var forceIgnoreInit bool
+
+var ignoreCmd = &cobra.Command{
+	Use:   "ignore",
+	Short: "Manage .telemanignore files",
+}
+
+var ignoreInitCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize a default .telemanignore file in the current directory",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		path := ".telemanignore"
+		if !forceIgnoreInit {
+			if _, err := os.Stat(path); err == nil {
+				fmt.Println("Already exists")
+				return nil
+			}
+		}
+
+		content := `node_modules/
+.cache/
+tmp/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+`
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %v", path, err)
+		}
+		fmt.Println("Created .telemanignore")
+		return nil
+	},
+}
+
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update Teleman to the latest version",
@@ -760,6 +795,11 @@ func init() {
 	rootCmd.AddCommand(purgeCmd)
 	rootCmd.AddCommand(messageCmd)
 	rootCmd.AddCommand(updateCmd)
+	
+	ignoreCmd.AddCommand(ignoreInitCmd)
+	rootCmd.AddCommand(ignoreCmd)
+
+	ignoreInitCmd.Flags().BoolVarP(&forceIgnoreInit, "force", "f", false, "Overwrite existing .telemanignore file")
 
 	treeCmd.Flags().IntVar(&treeDepth, "depth", 0, "Maximum depth to display (0 for unlimited)")
 

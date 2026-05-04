@@ -297,6 +297,16 @@ Teleman supports excluding files and directories during `copy`, `move`, and `syn
 - **Ordered Negation:** Use `!` to override an ignore rule (last match wins).
 - **Local Only:** Rules only apply to local source scanning; they do not affect downloads or remote listings.
 
+### Bootstrapping an Ignore File
+You can instantly create a default `.telemanignore` file pre-filled with common patterns (like `node_modules/`, `*.log`, etc.) by running:
+```bash
+# Initialize in current directory
+teleman ignore init
+
+# Force overwrite if one already exists
+teleman ignore init --force
+```
+
 ### Example `.telemanignore`:
 ```text
 # Exclude build and dependency directories

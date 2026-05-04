@@ -18,6 +18,8 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
 - **Dynamic Media Routing (Music/Video UI)**: Use the `--media` tag for your unencrypted payload files (like `.mp3` or `.flac`) and the engine will intuitively bind memory-resident ID3 Album Art and title strings directly into the push. This transforms your Telegram Channel instantly into a natively streaming Spotify-clone with track metadata, entirely without external logic layers.
 - **On-the-Fly Archiving**: Streaming an entire web-project tree using `--zip` will stream a completely logical `.zip` directly into Telegram without wasting local I/O writing an intermediate archive onto disk.
 - **Custom Telegram Captions**: Add custom strings or automatic metadata (name, size, date) to your file messages via `--caption auto`.
+- **Smart Ignoring (`.telemanignore`)**: Natively supports excluding files, folders, and applying override negation rules (`!`) directly from your source directories during sync or copy operations.
+- **Native Self-Updating**: Seamlessly update the CLI to the latest version by running `teleman update`. It securely queries GitHub and patches itself in-place without needing external scripts.
 - **Dynamic Progress Monitoring**: Real-time progress bars for all transfers (`copy`, `move`, `sync`, `download`) showing per-file speeds, ETAs, and overall job completion status.
 
 

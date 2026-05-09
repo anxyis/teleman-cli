@@ -23,22 +23,27 @@ type copyFileTask struct {
 	fileInfo    os.FileInfo
 }
 
-// RunCopy handles a minimal upload path for the given source and target.
+// RunCopy handles a minimal upload path for the given sources and target.
 // Accepts explicit TransferOptions instead of relying on package globals.
 //
 // Lock acquisition is deferred until after a pre-flight diff confirms there
 // is actual work to do. If all files are already in sync, the function returns
 // without ever acquiring the distributed lock or committing a new index version.
-func RunCopy(ctx context.Context, source, targetRaw string, opts *models.TransferOptions) error {
+func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *models.TransferOptions) error {
 	tctx, err := InitContext(ctx, targetRaw, opts)
 	if err != nil {
 		return err
 	}
 
-	// Validate source exists
-	info, err := os.Stat(source)
-	if err != nil {
-		return fmt.Errorf("source error: %v", err)
+	if len(sources) == 0 {
+		return fmt.Errorf("no sources provided")
+	}
+
+	// Validate sources exist
+	for _, source := range sources {
+		if _, err := os.Stat(source); err != nil {
+			return fmt.Errorf("source error: %v", err)
+		}
 	}
 
 	engine := chunker.NewEngineWithSize(tctx.Client, opts.MediaMode, opts.ChunkSize)
@@ -47,6 +52,11 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 	// Archives are always a new upload — no pre-flight diff needed. Acquire the
 	// lock immediately and proceed.
 	if opts.ZipMode || opts.TgzMode {
+		if len(sources) > 1 {
+			return fmt.Errorf("archive mode (--zip/--tgz) currently only supports a single source directory")
+		}
+		source := sources[0]
+		
 		archiveExt := ".zip"
 		archiveLabel := "zip"
 		if opts.TgzMode {
@@ -118,6 +128,7 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		for _, c := range chunks {
 			totalSize += c.Size
 		}
+		info, _ := os.Stat(source)
 		idx.Targets[tctx.TargetKey][vPath] = &models.FileEntry{
 			Size:    totalSize,
 			ModTime: info.ModTime().Unix(),
@@ -148,47 +159,70 @@ func RunCopy(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
 	}
 
-	// Load .telemanignore
-	ignorer := ignore.Load(source)
-	if ignorer.Loaded {
-		logger.Info("=> Using .telemanignore rules")
-	}
-
 	// Collect all source files
 	var allFiles []copyFileTask
-	if info.IsDir() {
-		filepath.Walk(source, func(path string, fi os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			rel, _ := filepath.Rel(source, path)
-			if rel == "." {
-				return nil
-			}
+	vPathMap := make(map[string]string) // virtualPath -> localPath for collision detection
 
-			if ignorer.IsIgnored(rel) {
-				logger.Debug("   [Skipped by ignore] %s", rel)
-				if fi.IsDir() {
-					return filepath.SkipDir
+	for _, source := range sources {
+		info, err := os.Stat(source)
+		if err != nil {
+			continue
+		}
+
+		// Load .telemanignore for this source
+		ignorer := ignore.Load(source)
+		if ignorer.Loaded {
+			logger.Info("=> Using .telemanignore rules for %s", source)
+		}
+
+		if info.IsDir() {
+			filepath.Walk(source, func(path string, fi os.FileInfo, err error) error {
+				if err != nil {
+					return nil
+				}
+				rel, _ := filepath.Rel(source, path)
+				if rel == "." {
+					return nil
+				}
+
+				if ignorer.IsIgnored(rel) {
+					logger.Debug("   [Skipped by ignore] %s", rel)
+					if fi.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+
+				if !fi.IsDir() {
+					vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
+					vPath = strings.TrimLeft(vPath, "/")
+					
+					// Duplicate detection
+					if existingLocal, exists := vPathMap[vPath]; exists {
+						return fmt.Errorf("destination collision detected: both '%s' and '%s' map to the same virtual path '%s'", existingLocal, path, vPath)
+					}
+					vPathMap[vPath] = path
+					
+					allFiles = append(allFiles, copyFileTask{localPath: path, virtualPath: vPath, fileInfo: fi})
 				}
 				return nil
-			}
-
-			if !fi.IsDir() {
-				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
-				vPath = strings.TrimLeft(vPath, "/")
-				allFiles = append(allFiles, copyFileTask{localPath: path, virtualPath: vPath, fileInfo: fi})
-			}
-			return nil
-		})
-	} else {
-		rel := filepath.Base(source)
-		if !ignorer.IsIgnored(rel) {
-			vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
-			vPath = strings.TrimLeft(vPath, "/")
-			allFiles = append(allFiles, copyFileTask{localPath: source, virtualPath: vPath, fileInfo: info})
+			})
 		} else {
-			logger.Debug("   [Skipped by ignore] %s", rel)
+			rel := filepath.Base(source)
+			if !ignorer.IsIgnored(rel) {
+				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
+				vPath = strings.TrimLeft(vPath, "/")
+				
+				// Duplicate detection
+				if existingLocal, exists := vPathMap[vPath]; exists {
+					return fmt.Errorf("destination collision detected: both '%s' and '%s' map to the same virtual path '%s'", existingLocal, source, vPath)
+				}
+				vPathMap[vPath] = source
+				
+				allFiles = append(allFiles, copyFileTask{localPath: source, virtualPath: vPath, fileInfo: info})
+			} else {
+				logger.Debug("   [Skipped by ignore] %s", rel)
+			}
 		}
 	}
 

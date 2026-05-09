@@ -53,6 +53,9 @@ teleman copy document.pdf backup_channel:
 
 # Copy a directory into a virtual folder
 teleman copy ./Movies/ my_alias:media/videos/
+
+# Copy multiple files and directories at once
+teleman copy file1.txt file2.txt ./docs/ backup_channel:
 ```
 
 ### Download Files
@@ -79,6 +82,9 @@ Copy-then-delete: uploads files to Telegram and **deletes source files** only af
 ```bash
 teleman move ./ConfidentialVault/ remote:
 teleman move ./OldProjects/ archive:legacy/ -t 8 -c 16
+
+# Move multiple files
+teleman move fileA.txt fileB.txt archive:temp/
 
 # Preview before committing (no files uploaded or deleted)
 teleman move ./Temp/ remote: --dry-run
@@ -107,6 +113,19 @@ teleman delete remote:logs/ # Deletes files in logs/, but not in logs/2024/
 Recursive deletion of everything under a virtual path. Requires a confirmation prompt unless `--confirm` is used.
 ```bash
 teleman purge backup:old_backups/ --confirm
+```
+
+### Send Messages (`message`)
+Sends a direct text message to a Telegram target.
+```bash
+teleman message backup: "Backup complete"
+cat report.txt | teleman message remote:
+```
+
+### Update Teleman (`update`)
+Updates the CLI to the latest version via GitHub CLI (`gh`).
+```bash
+teleman update
 ```
 
 ## 3. High-Performance & Memory Safety

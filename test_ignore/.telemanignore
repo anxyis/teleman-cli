@@ -1,5 +1,0 @@
-*.log
-!important.log
-node_modules/
-cache/
-secret.txt

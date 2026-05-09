@@ -20,7 +20,7 @@ import (
 // RunMove copies files from source to a virtual Telegram target, then deletes
 // the local source files only after the index has been successfully committed.
 // This ensures no data loss: source is only removed when Telegram confirms storage.
-func RunMove(ctx context.Context, source, targetRaw string, opts *models.TransferOptions) error {
+func RunMove(ctx context.Context, sources []string, targetRaw string, opts *models.TransferOptions) error {
 	// 1. Load config
 	cfg, err := config.Load()
 	if err != nil {
@@ -95,16 +95,14 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		idx.Targets[targetKey] = make(map[string]*models.FileEntry)
 	}
 
-	// Validate source
-	info, err := os.Stat(source)
-	if err != nil {
-		return fmt.Errorf("source error: %v", err)
+	// Validate sources
+	if len(sources) == 0 {
+		return fmt.Errorf("no sources provided")
 	}
-
-	// Load .telemanignore
-	ignorer := ignore.Load(source)
-	if ignorer.Loaded {
-		logger.Info("=> Using .telemanignore rules")
+	for _, source := range sources {
+		if _, err := os.Stat(source); err != nil {
+			return fmt.Errorf("source error: %v", err)
+		}
 	}
 
 	// 6. Collect files to move
@@ -113,40 +111,68 @@ func RunMove(ctx context.Context, source, targetRaw string, opts *models.Transfe
 		VPath     string
 	}
 	var filesToMove []moveTask
+	vPathMap := make(map[string]string) // virtualPath -> localPath for collision detection
 
-	if info.IsDir() {
-		filepath.Walk(source, func(path string, fi os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			rel, _ := filepath.Rel(source, path)
-			if rel == "." {
-				return nil
-			}
+	for _, source := range sources {
+		info, err := os.Stat(source)
+		if err != nil {
+			continue
+		}
 
-			if ignorer.IsIgnored(rel) {
-				logger.Debug("   [Skipped by ignore] %s", rel)
-				if fi.IsDir() {
-					return filepath.SkipDir
+		// Load .telemanignore
+		ignorer := ignore.Load(source)
+		if ignorer.Loaded {
+			logger.Info("=> Using .telemanignore rules for %s", source)
+		}
+
+		if info.IsDir() {
+			filepath.Walk(source, func(path string, fi os.FileInfo, err error) error {
+				if err != nil {
+					return nil
+				}
+				rel, _ := filepath.Rel(source, path)
+				if rel == "." {
+					return nil
+				}
+
+				if ignorer.IsIgnored(rel) {
+					logger.Debug("   [Skipped by ignore] %s", rel)
+					if fi.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+
+				if !fi.IsDir() {
+					vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
+					vPath = strings.TrimLeft(vPath, "/")
+					
+					// Duplicate detection
+					if existingLocal, exists := vPathMap[vPath]; exists {
+						return fmt.Errorf("destination collision detected: both '%s' and '%s' map to the same virtual path '%s'", existingLocal, path, vPath)
+					}
+					vPathMap[vPath] = path
+					
+					filesToMove = append(filesToMove, moveTask{LocalPath: path, VPath: vPath})
 				}
 				return nil
-			}
-
-			if !fi.IsDir() {
-				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
-				vPath = strings.TrimLeft(vPath, "/")
-				filesToMove = append(filesToMove, moveTask{LocalPath: path, VPath: vPath})
-			}
-			return nil
-		})
-	} else {
-		rel := filepath.Base(source)
-		if !ignorer.IsIgnored(rel) {
-			vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
-			vPath = strings.TrimLeft(vPath, "/")
-			filesToMove = append(filesToMove, moveTask{LocalPath: source, VPath: vPath})
+			})
 		} else {
-			logger.Debug("   [Skipped by ignore] %s", rel)
+			rel := filepath.Base(source)
+			if !ignorer.IsIgnored(rel) {
+				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
+				vPath = strings.TrimLeft(vPath, "/")
+				
+				// Duplicate detection
+				if existingLocal, exists := vPathMap[vPath]; exists {
+					return fmt.Errorf("destination collision detected: both '%s' and '%s' map to the same virtual path '%s'", existingLocal, source, vPath)
+				}
+				vPathMap[vPath] = source
+				
+				filesToMove = append(filesToMove, moveTask{LocalPath: source, VPath: vPath})
+			} else {
+				logger.Debug("   [Skipped by ignore] %s", rel)
+			}
 		}
 	}
 
@@ -259,8 +285,11 @@ commit:
 	}
 
 	// Clean up empty directories if source was a directory
-	if info.IsDir() {
-		cleanEmptyDirs(source)
+	for _, source := range sources {
+		info, err := os.Stat(source)
+		if err == nil && info.IsDir() {
+			cleanEmptyDirs(source)
+		}
 	}
 
 	if deleteErrors > 0 {

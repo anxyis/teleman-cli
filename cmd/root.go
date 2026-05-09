@@ -25,7 +25,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/telegram"
 )
 
-const AppVersion = "v1.1.5"
+const AppVersion = "v1.1.6"
 
 // Global context with cancellation — wired to SIGINT/SIGTERM for graceful shutdown.
 // All long-running operations check this context between iterations.
@@ -50,6 +50,9 @@ var rootCmd = &cobra.Command{
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Enter interactive configuration mode",
+	Long: `Starts the interactive configuration wizard to set up your Telegram Bot Token, 
+Index Channel ID, API endpoints, and target aliases. This is the first step 
+required before using any transfer commands.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Launching Interactive Wizard...")
 		if err := config.RunWizard(); err != nil {
@@ -62,6 +65,8 @@ var configCmd = &cobra.Command{
 var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Globally install teleman into the user system PATH",
+	Long: `Copies the teleman binary to a standard system location and adds it 
+to your PATH so you can run it from any directory.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := core.RunInstall(); err != nil {
 			return fmt.Errorf("install failed: %v", err)
@@ -73,7 +78,15 @@ var installCmd = &cobra.Command{
 var syncCmd = &cobra.Command{
 	Use:   "sync [source] [target_alias]:[path]",
 	Short: "Sync a source folder to a virtual target path",
-	Args:  cobra.ExactArgs(2),
+	Long: `Brings the remote destination into identical parity with your local endpoint.
+Warning: Sync will delete files on the remote destination if they no longer exist 
+on your physical computer.
+
+Examples:
+  teleman sync ./LocalBackup/ remote:backup/
+  teleman sync ./Projects/ nas:dev/ -t 8 -c 16
+  teleman sync ./WebProject/ remote:snapshots/ --zip`,
+	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		source := args[0]
 		target := args[1]
@@ -97,20 +110,28 @@ var syncCmd = &cobra.Command{
 }
 
 var copyCmd = &cobra.Command{
-	Use:   "copy [source] [target_alias]:[path]",
+	Use:   "copy [source1] [source2]... [target_alias]:[path]",
 	Short: "Copy files from source to virtual target, skipping identical files",
-	Args:  cobra.ExactArgs(2),
+	Long: `Uploads files from your local machine to a virtual Telegram target.
+It detects existing file hashes from the index map and skips transferring 
+files you've already uploaded.
+
+Examples:
+  teleman copy document.pdf backup_channel:
+  teleman copy ./Movies/ my_alias:media/videos/
+  teleman copy ./Documents/ backup:docs/ --encrypt`,
+	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		source := args[0]
-		target := args[1]
-		logger.Step("Starting Copy:\n Source: %s\n Target: %s", source, target)
+		target := args[len(args)-1]
+		sources := args[:len(args)-1]
+		logger.Step("Starting Copy:\n Sources: %v\n Target: %s", sources, target)
 
 		opts, err := buildTransferOptions(cmd)
 		if err != nil {
 			return err
 		}
 
-		if err := core.RunCopy(globalCtx, source, target, opts); err != nil {
+		if err := core.RunCopy(globalCtx, sources, target, opts); err != nil {
 			return fmt.Errorf("copy error: %v", err)
 		}
 		return nil
@@ -118,20 +139,28 @@ var copyCmd = &cobra.Command{
 }
 
 var moveCmd = &cobra.Command{
-	Use:   "move [source] [target_alias]:[path]",
+	Use:   "move [source1] [source2]... [target_alias]:[path]",
 	Short: "Move files, copying to destination and deleting from source",
-	Args:  cobra.ExactArgs(2),
+	Long: `Uploads files to Telegram and deletes source files only after the index 
+confirms successful storage. If the upload or commit fails, source files 
+are preserved.
+
+Examples:
+  teleman move ./ConfidentialVault/ remote:
+  teleman move ./OldProjects/ archive:legacy/ -t 8 -c 16
+  teleman move ./Temp/ remote: --dry-run`,
+	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		source := args[0]
-		target := args[1]
-		logger.Step("Starting Move:\n Source: %s\n Target: %s", source, target)
+		target := args[len(args)-1]
+		sources := args[:len(args)-1]
+		logger.Step("Starting Move:\n Sources: %v\n Target: %s", sources, target)
 
 		opts, err := buildTransferOptions(cmd)
 		if err != nil {
 			return err
 		}
 
-		if err := core.RunMove(globalCtx, source, target, opts); err != nil {
+		if err := core.RunMove(globalCtx, sources, target, opts); err != nil {
 			return fmt.Errorf("move error: %v", err)
 		}
 		return nil
@@ -175,7 +204,12 @@ Examples:
 var lsCmd = &cobra.Command{
 	Use:   "ls [target_alias]:[path]",
 	Short: "List files on the virtual Telegram target",
-	Args:  cobra.ExactArgs(1),
+	Long: `Lists files and directories stored in the virtual index for a given path.
+
+Examples:
+  teleman ls backup:
+  teleman ls remote:projects/web/`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetRaw := args[0]
 		parts := strings.SplitN(targetRaw, ":", 2)
@@ -233,7 +267,14 @@ var lsCmd = &cobra.Command{
 var sizeCmd = &cobra.Command{
 	Use:   "size [target_alias]:[path]",
 	Short: "Display total number of files and total size for a given virtual path",
-	Args:  cobra.ExactArgs(1),
+	Long: `Calculates and displays the total file count and storage size for a 
+given virtual path. This operation is performed using the local index 
+and does not require any network calls.
+
+Examples:
+  teleman size backup:
+  teleman size remote:media/photos/`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetRaw := args[0]
 		parts := strings.SplitN(targetRaw, ":", 2)
@@ -355,7 +396,14 @@ func printTree(node *treeNode, indent string, currentDepth, maxDepth int) {
 var treeCmd = &cobra.Command{
 	Use:   "tree [target_alias]:[path]",
 	Short: "Display the virtual filesystem structure in a tree-like format",
-	Args:  cobra.ExactArgs(1),
+	Long: `Generates a visual directory tree of your virtual filesystem.
+This operation is performed using the local index and does not require 
+any network calls.
+
+Examples:
+  teleman tree backup:
+  teleman tree remote:media/ --depth 2`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetRaw := args[0]
 		parts := strings.SplitN(targetRaw, ":", 2)
@@ -429,7 +477,15 @@ func formatBytes(b int64) string {
 var deleteCmd = &cobra.Command{
 	Use:   "delete [target_alias]:[path]",
 	Short: "Delete files under a target path without removing subdirectories",
-	Args:  cobra.ExactArgs(1),
+	Long: `Removes files from the virtual index and physically deletes the 
+chunks from Telegram. By default, it is non-recursive (it only matches 
+files directly in the specified path).
+
+Examples:
+  teleman delete backup:reports/2023_tax.pdf
+  teleman delete backup:reports/
+  teleman delete backup:legacy/ --dry-run`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts := &core.DeleteOptions{
 			Recursive: false,
@@ -444,7 +500,13 @@ var deleteCmd = &cobra.Command{
 var messageCmd = &cobra.Command{
 	Use:   "message [target_alias]: [text]",
 	Short: "Send a plain text message to a target chat",
-	Args:  cobra.RangeArgs(1, 2),
+	Long: `Sends a direct text message to a Telegram target. 
+If [text] is not provided, it reads from standard input.
+
+Examples:
+  teleman message backup: "Backup complete"
+  cat report.txt | teleman message remote:`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetRaw := args[0]
 		var text string
@@ -478,7 +540,14 @@ var messageCmd = &cobra.Command{
 var purgeCmd = &cobra.Command{
 	Use:   "purge [target_alias]:[path]",
 	Short: "Recursively delete files and directories under a target path",
-	Args:  cobra.ExactArgs(1),
+	Long: `Recursive counterpart to 'delete'. It removes everything starting 
+with the virtual path prefix. Requires confirmation unless --confirm is used.
+
+Examples:
+  teleman purge remote:old_projects/
+  teleman purge remote:temp/ --confirm
+  teleman purge backup:archive/ -t 16`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts := &core.DeleteOptions{
 			Recursive: true,
@@ -598,11 +667,14 @@ var forceIgnoreInit bool
 var ignoreCmd = &cobra.Command{
 	Use:   "ignore",
 	Short: "Manage .telemanignore files",
+	Long:  `Subcommands for initializing and managing .telemanignore files.`,
 }
 
 var ignoreInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize a default .telemanignore file in the current directory",
+	Long: `Creates a standard .telemanignore file pre-filled with common 
+patterns (node_modules, .git, *.log, etc.).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := ".telemanignore"
 		if !forceIgnoreInit {
@@ -631,6 +703,8 @@ Thumbs.db
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update Teleman to the latest version",
+	Long: `Checks for the latest release on GitHub using the 'gh' CLI and 
+updates the teleman binary in-place. Requires GitHub CLI (gh) installed.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Checking for updates via GitHub CLI...")
 		

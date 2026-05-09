@@ -33,9 +33,11 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
 11. [Best Performance & Multi-Threading](#11-best-performance--multi-threading)
     - [Tuning for a Local Bot API Server](#tuning-for-a-local-bot-api-server)
     - [Tuning for Telegram's Cloud API](#tuning-for-telegrams-cloud-api)
-12. [Output Control](#12-output-control)
-13. [Common Scenario Recipes](#13-common-scenario-recipes)
-14. [Flag Reference Table](#14-flag-reference-table)
+12. [Sending Messages (`message`)](#12-sending-messages-message)
+13. [Updating Teleman (`update`)](#13-updating-teleman-update)
+14. [Output Control](#14-output-control)
+15. [Common Scenario Recipes](#15-common-scenario-recipes)
+16. [Flag Reference Table](#16-flag-reference-table)
 
 ---
 
@@ -142,8 +144,12 @@ teleman copy ./report.pdf backup:
 # Upload one file into a specific virtual folder
 teleman copy ./invoice_march.pdf backup:invoices/2025/
 
-# Upload and force re-upload even if the file already exists remotely
+# Upload one file and force re-upload even if it exists
 teleman copy ./config.json remote:configs/ --force
+
+# Upload multiple files at once
+teleman copy ./report.pdf ./presentation.pptx backup:docs/
+teleman copy "C:\file1.txt" "C:\file2.txt" remote:
 ```
 
 ### Whole Directories
@@ -157,6 +163,9 @@ teleman copy C:/Photos/Vacation2025/ remote:photos/2025/
 
 # Recursively backup a project folder
 teleman copy ./my-project/ nas:dev/my-project/
+
+# Upload multiple directories and files together
+teleman copy ./Docs/ ./Images/ ./readme.txt backup:project_files/
 ```
 
 ### Encrypted Uploads
@@ -279,6 +288,9 @@ teleman move ./SensitiveRecords/ vault:records/ --encrypt
 
 # Move a large folder with parallel workers
 teleman move ./OldProjects/ archive:legacy/ -t 8 -c 16
+
+# Move multiple specific files at once
+teleman move ./Temp/log1.txt ./Temp/log2.txt archive:logs/
 
 # Preview what would be moved before committing
 teleman move ./Temp/ remote:archive/ --dry-run
@@ -497,7 +509,54 @@ teleman sync ./TestData/ remote:test/ --encrypt -t 8 -c 16 -v
 
 ---
 
-## 12. Output Control & UI
+## 12. Sending Messages (`message`)
+
+The `message` command sends a direct text message to a Telegram target chat. This is useful for notification scripts, sending reports, or simple communication.
+
+### Basic Usage
+
+```bash
+# Send a simple text message
+teleman message backup: "Backup job completed successfully."
+
+# Send text with special characters (use quotes)
+teleman message remote: "Status: OK | Files: 124 | Size: 1.2GB"
+```
+
+### Piping from Stdin
+
+You can pipe output from other commands directly into Teleman to send it as a message.
+
+```bash
+# Send a system report
+df -h | teleman message server_logs:
+
+# Send the last few lines of a log file
+tail -n 20 error.log | teleman message dev_team:
+```
+
+---
+
+## 13. Updating Teleman (`update`)
+
+Teleman can update itself to the latest version directly from GitHub. This ensures you always have the latest features, bug fixes, and security patches.
+
+### Requirements
+- **GitHub CLI (`gh`)**: The update command uses the `gh` tool to securely fetch release assets.
+- **Authentication**: You must be logged in via `gh auth login`.
+
+### Running the Update
+
+```bash
+# Check for updates and install if a newer version is available
+teleman update
+```
+
+If you are already on the latest version, Teleman will notify you and skip the download.
+
+---
+
+## 14. Output Control & UI
 
 Teleman features a professional, high-performance console UI designed for clear feedback during massive operations.
 
@@ -522,7 +581,7 @@ teleman sync /home/user/Documents backup:docs/ -t 4 -c 8 -q
 
 ---
 
-## 13. Common Scenario Recipes
+## 15. Common Scenario Recipes
 
 ### Scenario: Nightly automated backup (cron job)
 ```bash
@@ -575,7 +634,7 @@ teleman download backup:projects/my-app/ ./restored/
 
 ---
 
-## 14. Flag Reference Table
+## 16. Flag Reference Table
 
 ### Transfer Flags (`copy`, `sync`, `move`)
 

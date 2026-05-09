@@ -49,6 +49,9 @@ Push files incrementally. The CLI naturally ignores local files that map perfect
 # Safely push a file without dedupping
 teleman copy C:/Downloads/vacation_photos/ backup_alias:/Memories/
 
+# Upload multiple files and folders at once
+teleman copy file1.txt ./MyDocs/ backup_alias:/archive/
+
 # Aggressively sync a folder (Warning: destroys remote missing targets)
 teleman sync ./LocalProjects cloud:/dev_backups/
 ```
@@ -63,6 +66,15 @@ teleman size cloud:/
 
 # Display nested directory tree
 teleman tree cloud:/
+```
+
+### Utility Commands
+```bash
+# Send a notification message to a target
+teleman message backup: "Sync job finished at $(date)"
+
+# Update teleman to the latest version
+teleman update
 ```
 
 ### Advanced Power-User Flags

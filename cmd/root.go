@@ -776,26 +776,42 @@ updates the teleman binary in-place. Requires GitHub CLI (gh) installed.`,
 			if err := os.Rename(exePath, oldPath); err != nil {
 				return fmt.Errorf("failed to rename running executable: %v", err)
 			}
-		}
-
-		err = os.Rename(newBinaryPath, exePath)
-		if err != nil {
-			if osName != "windows" && os.IsPermission(err) {
-				fmt.Println("Write permission denied. Attempting to use sudo to install...")
-				mvCmd := exec.Command("sudo", "mv", newBinaryPath, exePath)
-				mvCmd.Stdin = os.Stdin
-				mvCmd.Stdout = os.Stdout
-				mvCmd.Stderr = os.Stderr
-				if err := mvCmd.Run(); err != nil {
-					return fmt.Errorf("sudo installation failed: %v", err)
+			if err := copyFile(newBinaryPath, exePath); err != nil {
+				return fmt.Errorf("failed to copy new executable: %v", err)
+			}
+		} else {
+			// Linux/macOS logic: avoid "text file busy" and EXDEV cross-device links
+			// by copying to the same filesystem first, then atomically renaming.
+			tmpExePath := exePath + ".tmp"
+			
+			if err := copyFile(newBinaryPath, tmpExePath); err != nil {
+				if os.IsPermission(err) {
+					fmt.Println("Write permission denied. Attempting to use sudo to install...")
+					// Execute copy, chmod, and atomic mv under sudo
+					installScript := fmt.Sprintf("cp %s %s && chmod 755 %s && mv %s %s", newBinaryPath, tmpExePath, tmpExePath, tmpExePath, exePath)
+					sudoCmd := exec.Command("sudo", "sh", "-c", installScript)
+					sudoCmd.Stdin = os.Stdin
+					sudoCmd.Stdout = os.Stdout
+					sudoCmd.Stderr = os.Stderr
+					if err := sudoCmd.Run(); err != nil {
+						return fmt.Errorf("sudo installation failed: %v", err)
+					}
+					fmt.Printf("Teleman updated successfully to %s!\n", latestTag)
+					return nil
 				}
-			} else {
-				if copyErr := copyFile(newBinaryPath, exePath); copyErr != nil {
-					return fmt.Errorf("failed to replace executable: %v (original rename err: %v)", copyErr, err)
-				}
-				if osName != "windows" {
-					os.Chmod(exePath, 0755)
-				}
+				return fmt.Errorf("failed to copy update to destination filesystem: %v", err)
+			}
+			
+			// Set executable permissions on the tmp file
+			if err := os.Chmod(tmpExePath, 0755); err != nil {
+				os.Remove(tmpExePath)
+				return fmt.Errorf("failed to set executable permissions: %v", err)
+			}
+			
+			// Atomically replace the running executable
+			if err := os.Rename(tmpExePath, exePath); err != nil {
+				os.Remove(tmpExePath)
+				return fmt.Errorf("failed to atomically replace executable: %v", err)
 			}
 		}
 		

@@ -658,3 +658,63 @@ func (c *Client) GetUpdates() ([]map[string]interface{}, error) {
 
 	return result.Result, nil
 }
+
+// DeleteMessages deletes multiple messages in a chat history in batches of 100.
+func (c *Client) DeleteMessages(chatID string, messageIDs []int64) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+
+	urlStr := fmt.Sprintf("%s/bot%s/deleteMessages", c.APIHost, c.Token)
+
+	for i := 0; i < len(messageIDs); i += 100 {
+		end := i + 100
+		if end > len(messageIDs) {
+			end = len(messageIDs)
+		}
+
+		batch := messageIDs[i:end]
+
+		payload := map[string]interface{}{
+			"chat_id":    chatID,
+			"message_ids": batch,
+		}
+
+		bodyBytes, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+
+		req, err := http.NewRequest("POST", urlStr, bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+
+		if err := c.handleRateLimit(resp); err != nil {
+			resp.Body.Close()
+			return err
+		}
+
+		var result struct {
+			Ok   bool   `json:"ok"`
+			Desc string `json:"description"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if err != nil {
+			return err
+		}
+
+		if !result.Ok {
+			return fmt.Errorf("Telegram API Error (deleteMessages): %s", result.Desc)
+		}
+	}
+
+	return nil
+}

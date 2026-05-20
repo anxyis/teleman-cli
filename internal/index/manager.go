@@ -179,10 +179,14 @@ func (m *Manager) PushVersion(idx *models.Index) error {
 			}
 			// Keep the last 5
 			if len(indexMsgs) > 5 {
+				var msgsToDelete []int64
 				for i := 0; i < len(indexMsgs)-5; i++ {
 					if indexMsgs[i] != newMsgID {
-						m.client.DeleteMessage(m.indexChannel, indexMsgs[i])
+						msgsToDelete = append(msgsToDelete, indexMsgs[i])
 					}
+				}
+				if len(msgsToDelete) > 0 {
+					m.client.DeleteMessages(m.indexChannel, msgsToDelete)
 				}
 			}
 		}

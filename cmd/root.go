@@ -604,13 +604,13 @@ func buildTransferOptions(cmd *cobra.Command) (*models.TransferOptions, error) {
 	}
 
 	return &models.TransferOptions{
-		Transfers: transfers,
-		Checkers:  checkers,
-		ChunkSize: parsedChunkSize,
-		Encrypt:   encrypt,
-		ZipMode:   zipMode,
-		TgzMode:   tgzMode,
-		MediaMode: mediaMode,
+		Transfers:        transfers,
+		Checkers:         checkers,
+		ChunkSize:        parsedChunkSize,
+		Encrypt:          encrypt,
+		ZipMode:          zipMode,
+		TgzMode:          tgzMode,
+		MediaMode:        mediaMode,
 		Force:            force,
 		DryRun:           dryRun,
 		Password:         password,
@@ -707,7 +707,7 @@ var updateCmd = &cobra.Command{
 updates the teleman binary in-place. Requires GitHub CLI (gh) installed.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Checking for updates via GitHub CLI...")
-		
+
 		osName := runtime.GOOS
 		arch := runtime.GOARCH
 		if arch == "x86_64" {
@@ -715,61 +715,61 @@ updates the teleman binary in-place. Requires GitHub CLI (gh) installed.`,
 		} else if arch == "aarch64" {
 			arch = "arm64"
 		}
-		
+
 		ext := ""
 		if osName == "windows" {
 			ext = ".exe"
 		}
-		
+
 		targetAsset := fmt.Sprintf("teleman-%s-%s%s", osName, arch, ext)
-		
+
 		exePath, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("failed to get executable path: %v", err)
 		}
-		
+
 		if _, err := exec.LookPath("gh"); err != nil {
 			return fmt.Errorf("GitHub CLI (gh) is required. Please install it: https://cli.github.com/")
 		}
-		
+
 		tagOut, err := exec.Command("gh", "release", "view", "-R", "anxyis/teleman-cli", "--json", "tagName", "-q", ".tagName").Output()
 		if err != nil {
 			return fmt.Errorf("failed to fetch latest release info. Make sure you are authenticated with 'gh auth login'. Error: %v", err)
 		}
 		latestTag := strings.TrimSpace(string(tagOut))
-		
+
 		if latestTag == AppVersion {
 			fmt.Printf("Teleman is already up-to-date (%s). Skipping update.\n", AppVersion)
 			return nil
 		}
-		
+
 		fmt.Printf("Updating from %s to %s...\n", AppVersion, latestTag)
 		fmt.Printf("Downloading %s...\n", targetAsset)
-		
+
 		tmpDir, err := os.MkdirTemp("", "teleman-update-*")
 		if err != nil {
 			return err
 		}
 		defer os.RemoveAll(tmpDir)
-		
+
 		dlCmd := exec.Command("gh", "release", "download", "-R", "anxyis/teleman-cli", "-p", targetAsset, "--clobber", "-D", tmpDir)
 		dlCmd.Stdout = os.Stdout
 		dlCmd.Stderr = os.Stderr
 		if err := dlCmd.Run(); err != nil {
 			return fmt.Errorf("failed to download update asset: %v", err)
 		}
-		
+
 		newBinaryPath := filepath.Join(tmpDir, targetAsset)
 		if _, err := os.Stat(newBinaryPath); os.IsNotExist(err) {
 			return fmt.Errorf("downloaded asset not found at %s", newBinaryPath)
 		}
-		
+
 		if osName != "windows" {
 			os.Chmod(newBinaryPath, 0755)
 		}
-		
+
 		fmt.Printf("Installing to %s...\n", exePath)
-		
+
 		if osName == "windows" {
 			oldPath := exePath + ".old"
 			os.Remove(oldPath)
@@ -783,7 +783,7 @@ updates the teleman binary in-place. Requires GitHub CLI (gh) installed.`,
 			// Linux/macOS logic: avoid "text file busy" and EXDEV cross-device links
 			// by copying to the same filesystem first, then atomically renaming.
 			tmpExePath := exePath + ".tmp"
-			
+
 			if err := copyFile(newBinaryPath, tmpExePath); err != nil {
 				if os.IsPermission(err) {
 					fmt.Println("Write permission denied. Attempting to use sudo to install...")
@@ -801,20 +801,20 @@ updates the teleman binary in-place. Requires GitHub CLI (gh) installed.`,
 				}
 				return fmt.Errorf("failed to copy update to destination filesystem: %v", err)
 			}
-			
+
 			// Set executable permissions on the tmp file
 			if err := os.Chmod(tmpExePath, 0755); err != nil {
 				os.Remove(tmpExePath)
 				return fmt.Errorf("failed to set executable permissions: %v", err)
 			}
-			
+
 			// Atomically replace the running executable
 			if err := os.Rename(tmpExePath, exePath); err != nil {
 				os.Remove(tmpExePath)
 				return fmt.Errorf("failed to atomically replace executable: %v", err)
 			}
 		}
-		
+
 		fmt.Printf("Teleman updated successfully to %s!\n", latestTag)
 		return nil
 	},
@@ -885,7 +885,7 @@ func init() {
 	rootCmd.AddCommand(purgeCmd)
 	rootCmd.AddCommand(messageCmd)
 	rootCmd.AddCommand(updateCmd)
-	
+
 	ignoreCmd.AddCommand(ignoreInitCmd)
 	rootCmd.AddCommand(ignoreCmd)
 

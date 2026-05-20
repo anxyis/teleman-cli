@@ -138,11 +138,11 @@ func installWindows(exePath string) error {
 func installTermux(exePath, prefix string) error {
 	targetExe := filepath.Join(prefix, "bin", "teleman")
 	logger.Info("Target binary path: %s", targetExe)
-	
+
 	if err := copyExecutable(exePath, targetExe); err != nil {
 		return fmt.Errorf("copy failed: %v", err)
 	}
-	
+
 	os.Chmod(targetExe, 0755)
 	logger.Success("Binary copied smoothly! Termux PATH is globally configured by default. No modification needed.")
 	return nil

@@ -51,18 +51,18 @@ func resolveAPIHost(token string, hosts models.HostMap) string {
 			continue
 		}
 		host = strings.TrimRight(host, "/")
-		
+
 		if firstConfigured == "" {
 			firstConfigured = host
 		}
-		
+
 		// For the Bot API, we test the /getMe endpoint
 		testURL := fmt.Sprintf("%s/bot%s/getMe", host, token)
 		if testEndpoint(testURL) {
 			return host
 		}
 	}
-	
+
 	// If none are reachable, return the first one they configured so the error output makes sense
 	return firstConfigured
 }
@@ -109,7 +109,7 @@ func NewSmartClient(token string, apiHosts models.HostMap, fileHosts models.Host
 		Token:          token,
 		APIHost:        apiHost,
 		FileServerHost: fileHost,
-		HTTPClient:     &http.Client{
+		HTTPClient: &http.Client{
 			Transport: transport,
 			Timeout:   30 * time.Minute,
 		},

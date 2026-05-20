@@ -86,7 +86,7 @@ func RunDelete(ctx context.Context, targetRaw string, opts *DeleteOptions) error
 
 	// 5. Match files based on scope (recursive vs non-recursive)
 	virtualPrefix := strings.TrimLeft(virtualRoot, "/")
-	
+
 	// If virtualPrefix is empty, it means they are targeting the root of the alias.
 	// For 'delete' (non-recursive), we only match files at the root (no slashes in path).
 	// For 'purge' (recursive), we match everything.
@@ -156,7 +156,7 @@ func RunDelete(ctx context.Context, targetRaw string, opts *DeleteOptions) error
 		vPath string
 		msgID int64
 	}
-	
+
 	jobChan := make(chan deleteJob, totalChunks)
 	for _, vPath := range matchedPaths {
 		for _, chunk := range targetFiles[vPath].Chunks {
@@ -197,7 +197,7 @@ func RunDelete(ctx context.Context, targetRaw string, opts *DeleteOptions) error
 					return
 				default:
 				}
-				
+
 				// Delete physical message
 				err := client.DeleteMessage(target.ChatID, job.msgID)
 				if err != nil {

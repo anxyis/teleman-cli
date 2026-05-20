@@ -45,7 +45,7 @@ func RunMove(ctx context.Context, sources []string, targetRaw string, opts *mode
 	// 3. API Connectivity Check
 	logger.Step("=> Initializing API Client...")
 	client := telegram.NewSmartClient(cfg.ActiveToken, cfg.APIHosts, cfg.FileServerHosts)
-	
+
 	if opts.AutoUpgradeChunk && !strings.Contains(client.APIHost, "api.telegram.org") {
 		logger.Info("   [Auto-Detect] Local API detected. Upgrading chunk size from 49M to 1999M limit.")
 		opts.ChunkSize = 1999 * 1024 * 1024
@@ -146,13 +146,13 @@ func RunMove(ctx context.Context, sources []string, targetRaw string, opts *mode
 				if !fi.IsDir() {
 					vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
 					vPath = strings.TrimLeft(vPath, "/")
-					
+
 					// Duplicate detection
 					if existingLocal, exists := vPathMap[vPath]; exists {
 						return fmt.Errorf("destination collision detected: both '%s' and '%s' map to the same virtual path '%s'", existingLocal, path, vPath)
 					}
 					vPathMap[vPath] = path
-					
+
 					filesToMove = append(filesToMove, moveTask{LocalPath: path, VPath: vPath})
 				}
 				return nil
@@ -162,13 +162,13 @@ func RunMove(ctx context.Context, sources []string, targetRaw string, opts *mode
 			if !ignorer.IsIgnored(rel) {
 				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(virtualRoot, "/"), filepath.Base(source))
 				vPath = strings.TrimLeft(vPath, "/")
-				
+
 				// Duplicate detection
 				if existingLocal, exists := vPathMap[vPath]; exists {
 					return fmt.Errorf("destination collision detected: both '%s' and '%s' map to the same virtual path '%s'", existingLocal, source, vPath)
 				}
 				vPathMap[vPath] = source
-				
+
 				filesToMove = append(filesToMove, moveTask{LocalPath: source, VPath: vPath})
 			} else {
 				logger.Debug("   [Skipped by ignore] %s", rel)
@@ -233,7 +233,7 @@ func RunMove(ctx context.Context, sources []string, targetRaw string, opts *mode
 		readerProxy := pm.ProxyReader(f, bar)
 
 		chunks, err := engine.ProcessStreamCtx(ctx, target.ChatID, target.ThreadID, filepath.Base(task.VPath), readerProxy, opts.Password, opts.Caption)
-		
+
 		if rc, ok := readerProxy.(interface{ Close() error }); ok {
 			rc.Close()
 		}

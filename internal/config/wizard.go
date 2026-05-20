@@ -12,7 +12,7 @@ import (
 // parseChatID smartly resolves raw inputs or Telegram Web URLs to the correct ID
 func parseChatID(input, targetType string) string {
 	input = strings.TrimSpace(input)
-	
+
 	re := regexp.MustCompile(`-?\d+`)
 	matches := re.FindStringSubmatch(input)
 	if len(matches) > 0 {
@@ -61,7 +61,7 @@ func RunWizard() error {
 			fmt.Println("Exiting wizard.")
 			return nil
 		}
-		
+
 		if len(action) == 0 {
 			continue
 		}
@@ -157,7 +157,7 @@ func setupGlobal(cfg *models.Config) error {
 
 	fmt.Println("\n--- Bot API Server Endpoints ---")
 	fmt.Println("Set your custom Bot API endpoints (e.g., http://192.168.x.x:8081). Leave blank to skip.")
-	
+
 	apiQs := []*survey.Question{
 		{
 			Name: "local",
@@ -191,14 +191,14 @@ func setupGlobal(cfg *models.Config) error {
 	if err := survey.Ask(apiQs, &apiAnswers); err != nil {
 		return err
 	}
-	
+
 	cfg.APIHosts.Local = strings.TrimSpace(apiAnswers.Local)
 	cfg.APIHosts.Tailscale = strings.TrimSpace(apiAnswers.Tailscale)
 	cfg.APIHosts.Public = strings.TrimSpace(apiAnswers.Public)
 
 	fmt.Println("\n--- File Server Endpoints ---")
 	fmt.Println("Set your file server endpoints (e.g., http://192.168.x.x:9000). Leave blank to skip.")
-	
+
 	fsQs := []*survey.Question{
 		{
 			Name: "local",

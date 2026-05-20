@@ -49,7 +49,7 @@ func Load(sourceDir string) *Matcher {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		isNegate := false
 		if strings.HasPrefix(line, "!") {
 			isNegate = true
@@ -74,7 +74,7 @@ func Load(sourceDir string) *Matcher {
 func (m *Matcher) IsIgnored(relPath string) bool {
 	// standardize path to forward slashes
 	relPath = strings.ReplaceAll(relPath, "\\", "/")
-	
+
 	// get just the filename for some match rules
 	baseName := filepath.Base(relPath)
 	parts := strings.Split(relPath, "/")

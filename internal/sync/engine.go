@@ -19,7 +19,7 @@ import (
 
 // SyncEngine orchestrates parallel file diffing and upload transfers.
 type SyncEngine struct {
-	opts       *models.TransferOptions
+	opts *models.TransferOptions
 }
 
 type fileTask struct {
@@ -31,7 +31,7 @@ type fileTask struct {
 // NewSyncEngine creates a sync engine using explicit TransferOptions instead of globals.
 func NewSyncEngine(opts *models.TransferOptions) (*SyncEngine, error) {
 	return &SyncEngine{
-		opts:       opts,
+		opts: opts,
 	}, nil
 }
 

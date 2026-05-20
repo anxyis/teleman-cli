@@ -56,7 +56,7 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 			return fmt.Errorf("archive mode (--zip/--tgz) currently only supports a single source directory")
 		}
 		source := sources[0]
-		
+
 		archiveExt := ".zip"
 		archiveLabel := "zip"
 		if opts.TgzMode {
@@ -196,13 +196,13 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 				if !fi.IsDir() {
 					vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), strings.ReplaceAll(rel, "\\", "/"))
 					vPath = strings.TrimLeft(vPath, "/")
-					
+
 					// Duplicate detection
 					if existingLocal, exists := vPathMap[vPath]; exists {
 						return fmt.Errorf("destination collision detected: both '%s' and '%s' map to the same virtual path '%s'", existingLocal, path, vPath)
 					}
 					vPathMap[vPath] = path
-					
+
 					allFiles = append(allFiles, copyFileTask{localPath: path, virtualPath: vPath, fileInfo: fi})
 				}
 				return nil
@@ -212,13 +212,13 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 			if !ignorer.IsIgnored(rel) {
 				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
 				vPath = strings.TrimLeft(vPath, "/")
-				
+
 				// Duplicate detection
 				if existingLocal, exists := vPathMap[vPath]; exists {
 					return fmt.Errorf("destination collision detected: both '%s' and '%s' map to the same virtual path '%s'", existingLocal, source, vPath)
 				}
 				vPathMap[vPath] = source
-				
+
 				allFiles = append(allFiles, copyFileTask{localPath: source, virtualPath: vPath, fileInfo: info})
 			} else {
 				logger.Debug("   [Skipped by ignore] %s", rel)

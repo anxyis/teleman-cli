@@ -49,7 +49,7 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 	for vPath := range targetFiles {
 		if matchesVirtualPrefix(vPath, virtualPrefix) {
 			matchedPaths = append(matchedPaths, vPath)
-			
+
 			if !anyEncrypted {
 				for _, chunk := range targetFiles[vPath].Chunks {
 					if chunk.Encrypted {

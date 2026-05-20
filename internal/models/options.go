@@ -9,15 +9,15 @@ import (
 // TransferOptions encapsulates all runtime flags for upload/download operations.
 // Passed explicitly to engines instead of relying on package-level globals.
 type TransferOptions struct {
-	Transfers int    // Number of parallel file transfers
-	Checkers  int    // Number of parallel diff checkers
-	ChunkSize int64  // Chunk size in bytes (parsed from human-readable string)
-	Encrypt   bool   // Whether to encrypt chunks with AES-256-GCM
-	ZipMode   bool   // Compress source into streaming zip archive
-	TgzMode   bool   // Compress source into streaming tar.gz archive
-	MediaMode bool   // Route eligible files to Telegram media endpoints
-	Force     bool   // Bypass index diffing, force re-upload
-	DryRun           bool   // Show what would be transferred without mutating state
+	Transfers        int                    // Number of parallel file transfers
+	Checkers         int                    // Number of parallel diff checkers
+	ChunkSize        int64                  // Chunk size in bytes (parsed from human-readable string)
+	Encrypt          bool                   // Whether to encrypt chunks with AES-256-GCM
+	ZipMode          bool                   // Compress source into streaming zip archive
+	TgzMode          bool                   // Compress source into streaming tar.gz archive
+	MediaMode        bool                   // Route eligible files to Telegram media endpoints
+	Force            bool                   // Bypass index diffing, force re-upload
+	DryRun           bool                   // Show what would be transferred without mutating state
 	Password         []byte                 // Encryption/decryption passphrase (derived from env, prompt, or flag)
 	PasswordCallback func() ([]byte, error) // Lazy evaluation for password prompting
 	AutoUpgradeChunk bool                   // Indicates if --cz was left at default and can be auto-upgraded for local APIs

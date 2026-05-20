@@ -277,7 +277,7 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 							logger.Debug("      [Media] %s → sendVideo", filename)
 						}
 						fileID, msgID, upErr = e.client.SendMediaCtx(ctx, chatID, threadID, chunkName, chunkReader, method, fieldName, params, thumbData, currentCaption)
-						
+
 						if upErr != nil {
 							logger.Debug("      [Media] %s %s failed (%v) — falling back to sendDocument", filename, method, upErr)
 							chunkReader.Seek(0, io.SeekStart)
@@ -537,7 +537,7 @@ func decryptAES(ciphertext []byte, passphrase []byte) ([]byte, error) {
 			return nil, fmt.Errorf("ciphertext too short to contain nonce")
 		}
 
-		nonce := ciphertext[20:20+nonceSize]
+		nonce := ciphertext[20 : 20+nonceSize]
 		sealed := ciphertext[20+nonceSize:]
 		return gcm.Open(nil, nonce, sealed, nil)
 	}

@@ -24,13 +24,14 @@ type Client struct {
 	HTTPClient     *http.Client
 }
 
+var testEndpointClient = &http.Client{Timeout: 2 * time.Second}
+
 // testEndpoint checks if a URL is reachable within a short timeout.
 func testEndpoint(url string) bool {
 	if url == "" {
 		return false
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := testEndpointClient.Get(url)
 	if err != nil {
 		return false
 	}

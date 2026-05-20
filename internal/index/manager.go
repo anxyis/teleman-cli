@@ -29,7 +29,7 @@ func NewManager(client *telegram.Client, idxChannel string) (*Manager, error) {
 		return nil, err
 	}
 	cacheDir := filepath.Join(home, ".config", "teleman", "cache")
-	os.MkdirAll(cacheDir, 0755)
+	os.MkdirAll(cacheDir, 0700)
 
 	return &Manager{
 		client:       client,
@@ -154,7 +154,7 @@ func (m *Manager) PushVersion(idx *models.Index) error {
 
 	// Write to local cache so next run maintains state
 	if err == nil {
-		os.WriteFile(m.localCache, data, 0644)
+		os.WriteFile(m.localCache, data, 0600)
 
 		// Fetch last messages to retain only 5
 		updates, uErr := m.client.GetUpdates()
@@ -226,7 +226,7 @@ func (m *Manager) Load() (*models.Index, error) {
 				data, readErr = io.ReadAll(stream)
 				stream.Close()
 				if readErr == nil {
-					os.WriteFile(m.localCache, data, 0644)
+					os.WriteFile(m.localCache, data, 0600)
 				}
 			} else {
 				readErr = sErr

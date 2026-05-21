@@ -2,6 +2,7 @@ package chunker
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"testing"
 )
@@ -124,3 +125,47 @@ func TestDeriveKey_KnownVector(t *testing.T) {
 		t.Errorf("Known vector mismatch!\nExpected: %x\nGot:      %x", expected, key)
 	}
 }
+
+func TestHashChunk(t *testing.T) {
+	sha256Sum := func(data []byte) string {
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:])
+	}
+
+	tests := []struct {
+		name     string
+		data     []byte
+		expected string
+	}{
+		{
+			name:     "empty data",
+			data:     []byte{},
+			expected: sha256Sum([]byte{}),
+		},
+		{
+			name:     "hello world",
+			data:     []byte("hello world"),
+			expected: sha256Sum([]byte("hello world")),
+		},
+		{
+			name:     "binary data",
+			data:     []byte{0x00, 0x01, 0x02, 0x03, 0xFF},
+			expected: sha256Sum([]byte{0x00, 0x01, 0x02, 0x03, 0xFF}),
+		},
+		{
+			name:     "large data",
+			data:     make([]byte, 1024*1024), // 1MB of zeros
+			expected: sha256Sum(make([]byte, 1024*1024)),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := HashChunk(tt.data)
+			if result != tt.expected {
+				t.Errorf("HashChunk() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+

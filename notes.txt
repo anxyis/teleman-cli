@@ -1,0 +1,20 @@
+# Teleman v1.1.6: Native Multi-File Support
+
+This release brings highly requested native multi-file support to Teleman's transfer commands, along with several UI/UX enhancements in the CLI.
+
+## 🌟 What's New
+
+*   **Multi-File Copy/Move**: You can now pass an unlimited number of source files and directories to `teleman copy` and `teleman move` natively!
+    *   Example: `teleman copy file1.md file2.md ./my_dir/ target_alias:archive/`
+    *   Teleman handles globbing naturally (`teleman copy *.jpg remote:photos/`) and perfectly maps everything relative to the target without duplicating your input directories.
+*   **Collision Detection Engine**: The index builder now intercepts virtual path collisions *before* any locking or dry-run evaluation occurs, saving you from accidental overwrites.
+*   **Documentation Hardening**: The CLI help outputs (`teleman --help`), the Command Guide, and the README have all been comprehensively updated to explicitly cover the new `message` utility, the new native `update` command, and full multi-file parameter usage.
+
+## 🚀 Installation & Update
+If you are already running Teleman, upgrading is completely seamless. Simply run:
+`teleman update`
+
+Otherwise, you can download the standalone binaries attached to this release for Windows, Linux (amd64), and Termux (arm64).
+
+## ?? Bug Fixes
+*   **Linux Self-Update Fix**: Fixed an issue causing "text file busy" and "invalid cross-device link" errors during 	eleman update on Linux and macOS.

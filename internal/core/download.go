@@ -267,6 +267,9 @@ func isValidDownloadPath(relPath string) bool {
 	// Convert Windows-style separators to Unix-style for cross-platform validation
 	// if a malicious index contains backslashes.
 	normalized := strings.ReplaceAll(relPath, "\\", "/")
+	if strings.HasPrefix(normalized, "/") {
+		return false
+	}
 	cleanPath := filepath.Clean(filepath.FromSlash(normalized))
 	if cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) || filepath.IsAbs(cleanPath) {
 		return false

@@ -135,6 +135,15 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 					relPath = filepath.Base(vPath)
 				}
 
+				if !isValidDownloadPath(relPath) {
+					logger.Error("      [Error] Path traversal detected: %s", relPath)
+					mu.Lock()
+					errors++
+					mu.Unlock()
+					pm.IncrementOverall()
+					continue
+				}
+
 				localPath := filepath.Join(localDest, filepath.FromSlash(relPath))
 
 				// Create parent directories
@@ -249,4 +258,18 @@ func matchesVirtualPrefix(candidatePath, prefix string) bool {
 	}
 
 	return strings.HasPrefix(candidatePath, dirPrefix)
+}
+
+// isValidDownloadPath checks if a relative path is safe to use for downloading.
+// It prevents path traversal attacks (e.g. Zip Slip) where a virtual file
+// could be named "../../etc/passwd" to escape the intended destination directory.
+func isValidDownloadPath(relPath string) bool {
+	// Convert Windows-style separators to Unix-style for cross-platform validation
+	// if a malicious index contains backslashes.
+	normalized := strings.ReplaceAll(relPath, "\\", "/")
+	cleanPath := filepath.Clean(filepath.FromSlash(normalized))
+	if cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) || filepath.IsAbs(cleanPath) {
+		return false
+	}
+	return true
 }

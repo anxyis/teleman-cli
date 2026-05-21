@@ -77,7 +77,6 @@ func (m *Matcher) IsIgnored(relPath string) bool {
 	
 	// get just the filename for some match rules
 	baseName := filepath.Base(relPath)
-	parts := strings.Split(relPath, "/")
 
 	// Implicitly ignore .telemanignore itself, unless explicitly negated
 	ignored := (baseName == ".telemanignore")
@@ -86,11 +85,18 @@ func (m *Matcher) IsIgnored(relPath string) bool {
 		return ignored
 	}
 
+	var parts []string
+	partsComputed := false
+
 	for _, p := range m.patterns {
 		match := false
 
 		// 1. Directory exclusion (ends with /)
 		if strings.HasSuffix(p.Text, "/") {
+			if !partsComputed {
+				parts = strings.Split(relPath, "/")
+				partsComputed = true
+			}
 			dirName := strings.TrimSuffix(p.Text, "/")
 			for _, part := range parts {
 				if part == dirName {

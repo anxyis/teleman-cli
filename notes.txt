@@ -1,20 +1,24 @@
-# Teleman v1.1.6: Native Multi-File Support
+# Teleman v1.1.7: Performance, Security & Test Hardening
 
-This release brings highly requested native multi-file support to Teleman's transfer commands, along with several UI/UX enhancements in the CLI.
+This release focuses on critical security patching, performance optimizations in core operations, and complete test suite hardening to ensure maximum reliability.
 
 ## 🌟 What's New
 
-*   **Multi-File Copy/Move**: You can now pass an unlimited number of source files and directories to `teleman copy` and `teleman move` natively!
-    *   Example: `teleman copy file1.md file2.md ./my_dir/ target_alias:archive/`
-    *   Teleman handles globbing naturally (`teleman copy *.jpg remote:photos/`) and perfectly maps everything relative to the target without duplicating your input directories.
-*   **Collision Detection Engine**: The index builder now intercepts virtual path collisions *before* any locking or dry-run evaluation occurs, saving you from accidental overwrites.
-*   **Documentation Hardening**: The CLI help outputs (`teleman --help`), the Command Guide, and the README have all been comprehensively updated to explicitly cover the new `message` utility, the new native `update` command, and full multi-file parameter usage.
+*   **🔒 Security & Permissions Hardening**:
+    *   **Zip Slip / Path Traversal Fix**: Patched a directory traversal vulnerability during download extraction to prevent malicious overwrites of local files.
+    *   **Strict Cache Permissions**: Local metadata and configuration cache permissions are now strictly locked down (files created with `0600` and directories with `0700` permissions) to prevent unauthorized read/write by other local users.
+*   **⚡ Performance Optimizations**:
+    *   **Index Truncation Optimization**: Resolved N+1 API request overhead when truncating indexes, significantly reducing remote round-trips.
+    *   **Lazy Path Splitting**: Reduced memory allocations in `IsIgnored` checks by utilizing lazy path splitting.
+    *   **Fast Hash Conversions**: Switched from slow formatting to direct `hex.EncodeToString` inside the Bolt engine, speeding up hash comparison and verification passes.
+*   **🧹 Code Health & Reliability**:
+    *   **Streamlined Sync Engine**: Simplified the core sync engine concurrency checker logic for more robust multi-threaded tracking.
+*   **🧪 Test Hardening**:
+    *   Comprehensive table-driven unit tests added for `chunkMessage`, `IsIgnored`, `ParseChunkSize`, config save/load, `HashChunk`, `DeriveKey`, `NewBarWriter`, `copyFile`, and `formatBytes`.
 
 ## 🚀 Installation & Update
-If you are already running Teleman, upgrading is completely seamless. Simply run:
+
+If you are already running Teleman, upgrade seamlessly:
 `teleman update`
 
-Otherwise, you can download the standalone binaries attached to this release for Windows, Linux (amd64), and Termux (arm64).
-
-## ?? Bug Fixes
-*   **Linux Self-Update Fix**: Fixed an issue causing "text file busy" and "invalid cross-device link" errors during 	eleman update on Linux and macOS.
+Otherwise, download the standalone binaries attached below for Windows, Linux, and Termux (Android).

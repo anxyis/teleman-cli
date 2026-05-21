@@ -19,7 +19,7 @@ import (
 
 // SyncEngine orchestrates parallel file diffing and upload transfers.
 type SyncEngine struct {
-	opts       *models.TransferOptions
+	opts *models.TransferOptions
 }
 
 type fileTask struct {
@@ -31,7 +31,7 @@ type fileTask struct {
 // NewSyncEngine creates a sync engine using explicit TransferOptions instead of globals.
 func NewSyncEngine(opts *models.TransferOptions) (*SyncEngine, error) {
 	return &SyncEngine{
-		opts:       opts,
+		opts: opts,
 	}, nil
 }
 
@@ -128,19 +128,14 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 		go func() {
 			defer wgCheck.Done()
 			for task := range tasksChan {
-				needsUpload := true
 				if !s.opts.Force {
-					if existing, ok := idx.Targets[tctx.TargetKey][task.VirtualPath]; ok {
-						if existing.Size == task.FileInfo.Size() && existing.ModTime == task.FileInfo.ModTime().Unix() {
-							needsUpload = false
-							skipped.Add(1)
-							logger.Debug("   [Skipped] %s (Unchanged)", task.VirtualPath)
-						}
+					if existing, ok := idx.Targets[tctx.TargetKey][task.VirtualPath]; ok && existing.Size == task.FileInfo.Size() && existing.ModTime == task.FileInfo.ModTime().Unix() {
+						skipped.Add(1)
+						logger.Debug("   [Skipped] %s (Unchanged)", task.VirtualPath)
+						continue
 					}
 				}
-				if needsUpload {
-					uploadChan <- task
-				}
+				uploadChan <- task
 			}
 		}()
 	}

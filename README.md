@@ -32,17 +32,12 @@ Teleman is distributed as a single standalone binary with zero external dependen
 
 ### 🪟 Windows (PowerShell)
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-windows-amd64.exe" -OutFile "teleman.exe"
+irm https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/install.ps1 | iex
 ```
 
-### 🐧 Linux (cURL)
+### 🐧 Linux & 📱 Termux
 ```bash
-curl -L -o teleman "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-linux-amd64" && chmod +x teleman && sudo mv teleman /usr/local/bin/
-```
-
-### 📱 Termux (cURL)
-```bash
-curl -L -o teleman "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-linux-arm64" && chmod +x teleman && mv teleman $PREFIX/bin/
+curl -fsSL https://raw.githubusercontent.com/anxyis/teleman-cli/main/scripts/install.sh | bash
 ```
 
 ---

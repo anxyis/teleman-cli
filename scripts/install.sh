@@ -8,7 +8,7 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 if [ "$OS" != "Linux" ]; then
-    echo "Error: This script only supports Linux."
+    echo "Error: This script only supports Linux and Termux."
     exit 1
 fi
 
@@ -52,34 +52,14 @@ else
     fi
 fi
 
-# Ensure GitHub CLI is installed
-if ! command -v gh >/dev/null 2>&1; then
-    echo "Error: GitHub CLI (gh) is required."
-    echo "Please install it: https://cli.github.com/"
-    exit 1
-fi
+echo "Fetching latest release from $REPO..."
+DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$TARGET"
 
-echo "Checking for latest release..."
-LATEST_TAG=$(gh release view -R "$REPO" --json tagName -q .tagName 2>/dev/null || echo "")
-
-if [ -n "$LATEST_TAG" ]; then
-    if command -v teleman >/dev/null 2>&1; then
-        LOCAL_VERSION=$(teleman --version 2>/dev/null | awk '{print $3}' || echo "unknown")
-        if [ "$LOCAL_VERSION" = "$LATEST_TAG" ]; then
-            echo "Teleman is already up-to-date ($LOCAL_VERSION). Skipping update."
-            exit 0
-        fi
-    fi
-    echo "Updating to $LATEST_TAG..."
-fi
-
-echo "Downloading $TARGET..."
-# Download the asset via gh to handle private repo auth
-gh release download -R "$REPO" -p "$TARGET" --clobber -D .
-mv "$TARGET" teleman_tmp
+echo "Downloading Teleman ($ARCH)..."
+curl -fsSL "$DOWNLOAD_URL" -o teleman_tmp
 chmod +x teleman_tmp
 
 echo "Installing to $INSTALL_DIR/teleman..."
 $SUDO mv teleman_tmp "$INSTALL_DIR/teleman"
 
-echo "Teleman installed/updated successfully! Run 'teleman --help' to get started."
+echo "Teleman installed successfully! Run 'teleman --help' to get started."

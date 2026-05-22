@@ -52,10 +52,7 @@ func InitContext(ctx context.Context, targetRaw string, opts *models.TransferOpt
 	logger.Step("=> Initializing API Client...")
 	client := telegram.NewSmartClient(cfg.ActiveToken, cfg.APIHosts, cfg.FileServerHosts)
 
-	if opts != nil && opts.AutoUpgradeChunk && !strings.Contains(client.APIHost, "api.telegram.org") {
-		logger.Info("   [Auto-Detect] Local API detected. Upgrading chunk size from 49M to 1999M limit.")
-		opts.ChunkSize = 1999 * 1024 * 1024
-	}
+
 
 	me, err := client.GetMeCtx(ctx)
 	if err != nil {

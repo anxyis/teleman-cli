@@ -11,6 +11,7 @@ This release focuses on critical security patching, performance optimizations in
 
 ### 2. ⚡ Performance Optimizations {#performance}
 
+*   **Zero-Allocation Encryption & Decryption**: Added a pooled scratch space (`scratchPool`) to recycle small buffers used for random salts and GCM nonces, completely eliminating their heap allocations during chunk encryption. Furthermore, integrated the central buffer `pool` during chunk decryption in `ReassembleStreamCtx`, avoiding massive dynamic slice allocations (up to 49MB per chunk) during file downloads.
 *   **Index Truncation Optimization**: Resolved N+1 remote API request overhead. Previously, the index engine made recursive queries to truncate older versions of virtual files; this process has been optimized to batch metadata lookups, greatly reducing sync time.
 *   **Lazy Path Splitting**: Memory allocations within the `.telemanignore` evaluation subsystem (`IsIgnored`) have been optimized by utilizing lazy splitting for directory components, avoiding immediate heap allocations on deep paths.
 *   **Fast Hash Conversions**: Switched Bolt hash conversions from expensive `fmt.Sprintf("%x", hash)` to direct `hex.EncodeToString(hash)` calls. This boosts the index engine's throughput when scanning large file trees.

@@ -11,7 +11,8 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
 
 - **Painless Storage Scaling**: By capitalizing on Telegram’s limitless native cloud architecture, you can backup massive local datasets completely free.
 - **Smart IP Routing**: Automatically probes and falls back between Local, Tailscale, and Public endpoints. If you leave your home network, the CLI seamlessly finds the next best active route with zero manual intervention.
-- **Dynamic 2GB Chunking**: The engine instantly detects local API hosts and auto-upgrades the chunking payload limit from 50MB to a massive 2GB, alongside memory-preserving dynamic buffer allocation that slashes GC overhead.
+- **Smart Auto-Tuning Chunk Sizes**: The engine analyzes file sizes and API host limits to dynamically scale chunk buffers on-the-fly. Small files get tighter chunks for fast UI progress, while massive transfers gracefully unlock chunks up to 1999MB (2GB) on local APIs without exceeding safe memory overheads.
+- **Download Resumption**: Network interrupted mid-transfer? Teleman gracefully resumes downloads exactly from the last verified chunk without redownloading data you already have, saving bandwidth and time.
 - **AES-256-GCM Security (TLM1)**: Secure sensitive directories seamlessly. Every chunk uses a unique, random cryptographically secure salt to prevent key-reuse vulnerabilities. Backward compatibility with legacy encrypted files is natively maintained.
 - **Streaming Reassembly (OOM Protected)**: The reassembly engine streams downloads directly to disk, avoiding high RAM usage. This prevents crashes when handling massive files or large chunk sizes.
 - **Buffer Pooling**: Implements `sync.Pool` logic to recycle memory buffers, slashing GC overhead and improving throughput during concurrent operations.

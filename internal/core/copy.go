@@ -72,21 +72,6 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 			return nil
 		}
 
-		// Acquire lock for the write path
-		if err := tctx.IdxManager.AcquireLock("", "copy"); err != nil {
-			return fmt.Errorf("failed to acquire lock: %v", err)
-		}
-		defer tctx.IdxManager.ReleaseLock()
-
-		logger.Step("=> Loading Virtual Index...")
-		idx, err := tctx.IdxManager.Load()
-		if err != nil {
-			return fmt.Errorf("failed to load index: %v", err)
-		}
-		if idx.Targets[tctx.TargetKey] == nil {
-			idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
-		}
-
 		logger.Step("=> Archiving '%s' on-the-fly (%s) to %s", source, archiveLabel, vPath)
 		logger.Info("   [Uploading] %s (Streaming Archive)...", vPath)
 
@@ -129,6 +114,22 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 			totalSize += c.Size
 		}
 		info, _ := os.Stat(source)
+
+		// Acquire lock for the write path now that upload is done
+		if err := tctx.IdxManager.AcquireLock("", "copy"); err != nil {
+			return fmt.Errorf("failed to acquire lock: %v", err)
+		}
+		defer tctx.IdxManager.ReleaseLock()
+
+		logger.Step("=> Loading Virtual Index...")
+		idx, err := tctx.IdxManager.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load index: %v", err)
+		}
+		if idx.Targets[tctx.TargetKey] == nil {
+			idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
+		}
+
 		idx.Targets[tctx.TargetKey][vPath] = &models.FileEntry{
 			Size:    totalSize,
 			ModTime: info.ModTime().Unix(),

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/teleman-cli/teleman/internal/models"
@@ -200,37 +201,48 @@ func (c *Client) SendDocument(chatID string, threadID string, filename string, r
 func (c *Client) SendDocumentCtx(ctx context.Context, chatID string, threadID string, filename string, r io.Reader, caption string) (string, int64, error) {
 	url := fmt.Sprintf("%s/bot%s/sendDocument", c.APIHost, c.Token)
 
-	pr, pw := io.Pipe()
-	writer := multipart.NewWriter(pw)
-
-	go func() {
-		defer pw.Close()
-		writer.WriteField("chat_id", chatID)
-		if threadID != "" {
-			writer.WriteField("message_thread_id", threadID)
-		}
-		if caption != "" {
-			writer.WriteField("caption", caption)
-		}
-
-		// Force Telegram to treat this as a pure raw file, not rich media
-		writer.WriteField("disable_content_type_detection", "true")
-
-		part, err := writer.CreateFormFile("document", filename)
-		if err == nil {
-			io.Copy(part, r)
-		}
-		writer.Close()
-	}()
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
-	if err != nil {
-		return "", 0, err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	seeker, isSeeker := r.(io.Seeker)
 
 	// Exponential backoff retry loop for 429 Flood Wait
 	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			if !isSeeker {
+				return "", 0, fmt.Errorf("rate limited, but reader cannot be rewound for retry")
+			}
+			if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+				return "", 0, fmt.Errorf("failed to seek reader for retry: %v", err)
+			}
+		}
+
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
+
+		go func() {
+			defer pw.Close()
+			writer.WriteField("chat_id", chatID)
+			if threadID != "" {
+				writer.WriteField("message_thread_id", threadID)
+			}
+			if caption != "" {
+				writer.WriteField("caption", caption)
+			}
+
+			// Force Telegram to treat this as a pure raw file, not rich media
+			writer.WriteField("disable_content_type_detection", "true")
+
+			part, err := writer.CreateFormFile("document", filename)
+			if err == nil {
+				io.Copy(part, r)
+			}
+			writer.Close()
+		}()
+
+		req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
+		if err != nil {
+			return "", 0, err
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
 			// Check if context was cancelled
@@ -243,9 +255,7 @@ func (c *Client) SendDocumentCtx(ctx context.Context, chatID string, threadID st
 		if resp.StatusCode == http.StatusTooManyRequests {
 			c.handleRateLimit(resp)
 			resp.Body.Close()
-			// Because we piped the reader, doing a blind retry here actually fails
-			// if the body reader was totally consumed. Return error to let the Chunk Engine retry.
-			return "", 0, fmt.Errorf("rate limited after %d attempts", attempt+1)
+			continue
 		}
 
 		defer resp.Body.Close()
@@ -283,46 +293,57 @@ func (c *Client) SendMedia(chatID string, threadID string, filename string, r io
 func (c *Client) SendMediaCtx(ctx context.Context, chatID string, threadID string, filename string, r io.Reader, method string, fieldName string, params map[string]string, thumbData []byte, caption string) (string, int64, error) {
 	url := fmt.Sprintf("%s/bot%s/%s", c.APIHost, c.Token, method)
 
-	pr, pw := io.Pipe()
-	writer := multipart.NewWriter(pw)
-
-	go func() {
-		defer pw.Close()
-		writer.WriteField("chat_id", chatID)
-		if threadID != "" {
-			writer.WriteField("message_thread_id", threadID)
-		}
-		if caption != "" {
-			writer.WriteField("caption", caption)
-		}
-
-		if params != nil {
-			for k, v := range params {
-				writer.WriteField(k, v)
-			}
-		}
-
-		if len(thumbData) > 0 {
-			part, err := writer.CreateFormFile("thumb", "thumb.jpg")
-			if err == nil {
-				io.Copy(part, bytes.NewReader(thumbData))
-			}
-		}
-
-		part, err := writer.CreateFormFile(fieldName, filename)
-		if err == nil {
-			io.Copy(part, r)
-		}
-		writer.Close()
-	}()
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
-	if err != nil {
-		return "", 0, err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	seeker, isSeeker := r.(io.Seeker)
 
 	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			if !isSeeker {
+				return "", 0, fmt.Errorf("rate limited, but reader cannot be rewound for retry")
+			}
+			if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+				return "", 0, fmt.Errorf("failed to seek reader for retry: %v", err)
+			}
+		}
+
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
+
+		go func() {
+			defer pw.Close()
+			writer.WriteField("chat_id", chatID)
+			if threadID != "" {
+				writer.WriteField("message_thread_id", threadID)
+			}
+			if caption != "" {
+				writer.WriteField("caption", caption)
+			}
+
+			if params != nil {
+				for k, v := range params {
+					writer.WriteField(k, v)
+				}
+			}
+
+			if len(thumbData) > 0 {
+				part, err := writer.CreateFormFile("thumb", "thumb.jpg")
+				if err == nil {
+					io.Copy(part, bytes.NewReader(thumbData))
+				}
+			}
+
+			part, err := writer.CreateFormFile(fieldName, filename)
+			if err == nil {
+				io.Copy(part, r)
+			}
+			writer.Close()
+		}()
+
+		req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
+		if err != nil {
+			return "", 0, err
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -334,7 +355,7 @@ func (c *Client) SendMediaCtx(ctx context.Context, chatID string, threadID strin
 		if resp.StatusCode == http.StatusTooManyRequests {
 			c.handleRateLimit(resp)
 			resp.Body.Close()
-			return "", 0, fmt.Errorf("rate limited after %d attempts", attempt+1)
+			continue
 		}
 
 		defer resp.Body.Close()
@@ -667,6 +688,10 @@ func (c *Client) DeleteMessages(chatID string, messageIDs []int64) error {
 
 	urlStr := fmt.Sprintf("%s/bot%s/deleteMessages", c.APIHost, c.Token)
 
+	var wg sync.WaitGroup
+	errChan := make(chan error, (len(messageIDs)/100)+1)
+	sem := make(chan struct{}, 5) // 5 concurrent batches
+
 	for i := 0; i < len(messageIDs); i += 100 {
 		end := i + 100
 		if end > len(messageIDs) {
@@ -675,44 +700,66 @@ func (c *Client) DeleteMessages(chatID string, messageIDs []int64) error {
 
 		batch := messageIDs[i:end]
 
-		payload := map[string]interface{}{
-			"chat_id":    chatID,
-			"message_ids": batch,
-		}
+		wg.Add(1)
+		go func(b []int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		bodyBytes, err := json.Marshal(payload)
-		if err != nil {
-			return err
-		}
+			payload := map[string]interface{}{
+				"chat_id":     chatID,
+				"message_ids": b,
+			}
 
-		req, err := http.NewRequest("POST", urlStr, bytes.NewBuffer(bodyBytes))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
+			bodyBytes, err := json.Marshal(payload)
+			if err != nil {
+				errChan <- err
+				return
+			}
 
-		resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return err
-		}
+			req, err := http.NewRequest("POST", urlStr, bytes.NewBuffer(bodyBytes))
+			if err != nil {
+				errChan <- err
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
 
-		if err := c.handleRateLimit(resp); err != nil {
+			resp, err := c.HTTPClient.Do(req)
+			if err != nil {
+				errChan <- err
+				return
+			}
+
+			if err := c.handleRateLimit(resp); err != nil {
+				resp.Body.Close()
+				errChan <- err
+				return
+			}
+
+			var result struct {
+				Ok   bool   `json:"ok"`
+				Desc string `json:"description"`
+			}
+			err = json.NewDecoder(resp.Body).Decode(&result)
 			resp.Body.Close()
-			return err
-		}
+			if err != nil {
+				errChan <- err
+				return
+			}
 
-		var result struct {
-			Ok   bool   `json:"ok"`
-			Desc string `json:"description"`
-		}
-		err = json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
+			if !result.Ok {
+				errChan <- fmt.Errorf("Telegram API Error (deleteMessages): %s", result.Desc)
+				return
+			}
+		}(batch)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
 		if err != nil {
 			return err
-		}
-
-		if !result.Ok {
-			return fmt.Errorf("Telegram API Error (deleteMessages): %s", result.Desc)
 		}
 	}
 

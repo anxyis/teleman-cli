@@ -17,9 +17,9 @@ Because of this, Teleman implements an isolated Metadata Index (`teleman.index.j
 Teleman leverages an advanced streaming logic to split large files seamlessly in memory without blowing up your device's memory limitations (RAM):
 1. **Hashing:** Before uploading, each local file is split into byte streams (chunks) and hashed (`SHA-256`).
 2. **Deduplication:** Teleman queries the active Index. If a chunk hash already exists *anywhere* in your target storage, the client merely copies the existing `file_id` pointer into the index. It does not waste bandwidth re-uploading identical bytes.
-3. **Memory Optimization:** Uses a `sync.Pool` for byte buffers during chunking, drastically reducing memory pressure and GC overhead during high-concurrency uploads.
+3. **Memory Optimization:** Uses a `sync.Pool` for byte buffers during chunking and dynamic chunk decryption/reassembly, and a specialized `scratchPool` for small encryption buffers, drastically reducing memory pressure and GC overhead to achieve near-zero-allocation security operations.
 4. **Encryption:** Optional AES-256 encryption (`-e`) is applied on a per-chunk streaming level *before* bytes hit the network.
-4. **Archiving:** When using `--zip` or `--tgz`, entire local directories are collapsed into a continuous, single archive stream on-the-fly and chunked logically across Telegram.
+22. **Archiving:** When using `--zip` or `--tgz`, entire local directories are collapsed into a continuous, single archive stream on-the-fly and chunked logically across Telegram.
 
 ### 3. Dedicated Index Channel & Locking
 Because the Metadata Index is the heart of your filesystem, we ensure data integrity via **Distributed Locking.**
@@ -36,8 +36,10 @@ The download path is the strict inverse of the upload pipeline, with explicit co
 2. **Hash Verification:** Every downloaded chunk is SHA-256 hashed and compared against the index record *before* any decryption or disk writes. A mismatch aborts the entire download immediately — no partial, corrupted files are ever finalized.
 3. **Pipeline Order:** `Download → Hash Verify → Decrypt (if encrypted) → Write to Disk`. The hash is verified on the raw (possibly encrypted) bytes, matching exactly what was hashed during upload.
 4. **OOM Protection:** Chunks are streamed directly to temporary files on disk during download and hashing, preventing memory-based crashes when handling extremely large chunks or concurrent transfers.
-5. **Atomic Writes:** Files are streamed to a `.partial` temp file during download. Only after all chunks are successfully verified and written is the file atomically renamed to its final path. This ensures the output directory never contains half-written files.
-5. **Safe Path Matching:** Virtual path prefix matching enforces segment boundaries (e.g., `media` will never collide with `media_test`). Only exact segment or exact file matches are resolved.
+5. **Decryption Buffering:** Decryption of downloaded encrypted chunks is performed using borrowed buffers from the central `sync.Pool`, completely avoiding dynamic heap allocations of up to 49MB per chunk.
+6. **Atomic Writes:** Files are streamed to a `.partial` temp file during download. Only after all chunks are successfully verified and written is the file atomically renamed to its final path. This ensures the output directory never contains half-written files.
+7. **Safe Path Matching:** Virtual path prefix matching enforces segment boundaries (e.g., `media` will never collide with `media_test`). Only exact segment or exact file matches are resolved.
+8. **Download Resumption:** If an interruption occurs, the engine recalculates the last verified chunk boundary within the `.partial` file, gracefully truncates corrupted incomplete chunks, and safely resumes the stream without redownloading verified bytes.
 
 ### 5. Encryption & Key Management
 Teleman provides optional per-chunk AES-256-GCM encryption:

@@ -221,13 +221,73 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 
 // downloadFile creates a file at the given path and streams reassembled chunks into it.
 func downloadFile(ctx context.Context, engine *chunker.Engine, entry *models.FileEntry, destPath string, password []byte, progressTracker io.Writer) error {
-	f, err := os.Create(destPath)
+	// Open file in RDWR mode, create if it doesn't exist
+	f, err := os.OpenFile(destPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to create file %s: %v", destPath, err)
+		return fmt.Errorf("failed to open file %s: %v", destPath, err)
 	}
 	defer f.Close()
 
-	if err := engine.ReassembleStreamCtx(ctx, entry.Chunks, f, password, progressTracker); err != nil {
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat file: %v", err)
+	}
+	currentSize := info.Size()
+
+	// 1. Sort chunks by offset to properly map them
+	sorted := make([]*models.ChunkEntry, len(entry.Chunks))
+	copy(sorted, entry.Chunks)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Offset < sorted[j].Offset
+	})
+
+	var chunksToDownload []*models.ChunkEntry
+	var startOffset int64 = 0
+
+	for i, chunk := range sorted {
+		chunkEnd := entry.Size
+		if i < len(sorted)-1 {
+			chunkEnd = sorted[i+1].Offset
+		}
+
+		if currentSize >= chunkEnd {
+			// Chunk is fully downloaded, we can safely resume past it
+			startOffset = chunkEnd
+		} else {
+			// Chunk is partially or not downloaded, need to resume from this chunk
+			chunksToDownload = append(chunksToDownload, chunk)
+		}
+	}
+
+	// Truncate back to the nearest safe chunk boundary to discard incomplete chunk writes
+	if err := f.Truncate(startOffset); err != nil {
+		return fmt.Errorf("failed to truncate partial file: %v", err)
+	}
+	if _, err := f.Seek(startOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to seek partial file: %v", err)
+	}
+
+	// Advance progress bar by skipping the verified bytes
+	if startOffset > 0 && progressTracker != nil {
+		// Use a 1MB dummy buffer to fast-forward the progress bar
+		// (io.Writer expects byte writes, but progress trackers just count them over io.Discard)
+		dummy := make([]byte, 1024*1024)
+		var written int64
+		for written < startOffset {
+			toWrite := int64(len(dummy))
+			if startOffset-written < toWrite {
+				toWrite = startOffset - written
+			}
+			progressTracker.Write(dummy[:toWrite])
+			written += toWrite
+		}
+	}
+
+	if len(chunksToDownload) == 0 {
+		return nil
+	}
+
+	if err := engine.ReassembleStreamCtx(ctx, chunksToDownload, f, password, progressTracker); err != nil {
 		return fmt.Errorf("reassembly failed: %v", err)
 	}
 

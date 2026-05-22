@@ -25,12 +25,13 @@ import (
 
 import "sync"
 
-// Engine handles breaking files into streams and pushing to Telegram.
 type Engine struct {
-	client    *telegram.Client
-	ChunkSize int64
-	MediaMode bool
-	pool      sync.Pool
+	client      *telegram.Client
+	ChunkSize   int64
+	MediaMode   bool
+	pool        sync.Pool
+	encPool     sync.Pool
+	scratchPool sync.Pool
 }
 
 func newEngineWithPool(client *telegram.Client, mediaMode bool, chunkSize int64) *Engine {
@@ -46,19 +47,29 @@ func newEngineWithPool(client *telegram.Client, mediaMode bool, chunkSize int64)
 				return &buf
 			},
 		},
+		encPool: sync.Pool{
+			New: func() interface{} {
+				buf := make([]byte, 0, 1024*1024)
+				return &buf
+			},
+		},
+		scratchPool: sync.Pool{
+			New: func() interface{} {
+				// 16 bytes for salt + 12 bytes for nonce = 28 bytes. Use 32 bytes to be safe.
+				buf := make([]byte, 32)
+				return &buf
+			},
+		},
 	}
 }
 
 // NewEngine creates a chunking engine with dynamic chunk limits.
 func NewEngine(client *telegram.Client, mediaMode bool) *Engine {
-	return newEngineWithPool(client, mediaMode, 49*1024*1024)
+	return newEngineWithPool(client, mediaMode, 0)
 }
 
 // NewEngineWithSize creates a chunking engine with an explicit chunk size.
 func NewEngineWithSize(client *telegram.Client, mediaMode bool, chunkSize int64) *Engine {
-	if chunkSize <= 0 {
-		chunkSize = 49 * 1024 * 1024
-	}
 	return newEngineWithPool(client, mediaMode, chunkSize)
 }
 
@@ -97,6 +108,41 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 		}
 	}
 
+	currentChunkSize := e.ChunkSize
+	if currentChunkSize <= 0 {
+		isLocalAPI := !strings.Contains(e.client.APIHost, "api.telegram.org")
+		
+		if !isLocalAPI {
+			// Public API
+			if totalSize >= 0 {
+				if totalSize <= 10*1024*1024 {
+					currentChunkSize = 2 * 1024 * 1024 // 2MB
+				} else if totalSize <= 50*1024*1024 {
+					currentChunkSize = 5 * 1024 * 1024 // 5MB
+				} else {
+					currentChunkSize = 49 * 1024 * 1024 // 49MB max
+				}
+			} else {
+				currentChunkSize = 49 * 1024 * 1024
+			}
+		} else {
+			// Local API (Supports up to 2GB, we cap at 500MB to save RAM)
+			if totalSize >= 0 {
+				if totalSize <= 50*1024*1024 {
+					currentChunkSize = 5 * 1024 * 1024 // 5MB
+				} else if totalSize <= 500*1024*1024 {
+					currentChunkSize = 50 * 1024 * 1024 // 50MB
+				} else if totalSize <= 2*1024*1024*1024 {
+					currentChunkSize = 200 * 1024 * 1024 // 200MB
+				} else {
+					currentChunkSize = 1999 * 1024 * 1024 // 1999MB max to fully utilize local API
+				}
+			} else {
+				currentChunkSize = 1999 * 1024 * 1024
+			}
+		}
+	}
+
 	for {
 		// Check for cancellation before reading the next chunk
 		select {
@@ -110,10 +156,10 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 		if f, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
 			if stat, err := f.Stat(); err == nil {
 				rem := stat.Size() - offset
-				if rem > 0 && rem < e.ChunkSize {
+				if rem > 0 && rem < currentChunkSize {
 					expectedSize = rem
-				} else if rem >= e.ChunkSize {
-					expectedSize = e.ChunkSize
+				} else if rem >= currentChunkSize {
+					expectedSize = currentChunkSize
 				}
 			}
 		}
@@ -121,8 +167,8 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 		// Fallback for streams (e.g. zip/tgz): allocate a reasonable 1MB to start, avoiding massive GC pressure
 		if expectedSize == 0 {
 			expectedSize = 1024 * 1024
-			if expectedSize > e.ChunkSize {
-				expectedSize = e.ChunkSize
+			if expectedSize > currentChunkSize {
+				expectedSize = currentChunkSize
 			}
 		}
 
@@ -140,10 +186,10 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 		var readErr error
 		var nBytes int64
 
-		for nBytes < e.ChunkSize {
+		for nBytes < currentChunkSize {
 			toRead := len(tmp)
-			if e.ChunkSize-nBytes < int64(toRead) {
-				toRead = int(e.ChunkSize - nBytes)
+			if currentChunkSize-nBytes < int64(toRead) {
+				toRead = int(currentChunkSize - nBytes)
 			}
 			n, err := r.Read(tmp[:toRead])
 			if n > 0 {
@@ -170,6 +216,7 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 		if nBytes > 0 {
 			var isEncrypted bool
 			var dataToUpload []byte
+			var encBufPtr *[]byte
 
 			// Determine caption for the first chunk only
 			var currentCaption string
@@ -194,8 +241,22 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 			}
 
 			if len(password) > 0 {
-				encryptedData, encErr := encryptAES(chunkData, password)
+				encBufPtr = e.encPool.Get().(*[]byte)
+				
+				expectedEncSize := 4 + 16 + 12 + len(chunkData) + 16 // Prefix + Salt + Nonce + Data + Tag
+				if cap(*encBufPtr) < expectedEncSize {
+					newBuf := make([]byte, 0, expectedEncSize)
+					encBufPtr = &newBuf
+				}
+
+				scratchPtr := e.scratchPool.Get().(*[]byte)
+				scratch := *scratchPtr
+
+				encryptedData, encErr := e.encryptAES(chunkData, password, *encBufPtr, scratch)
+				e.scratchPool.Put(scratchPtr)
+
 				if encErr != nil {
+					e.encPool.Put(encBufPtr)
 					e.pool.Put(bufPtr)
 					return nil, encErr
 				}
@@ -305,6 +366,9 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 			}
 
 			if upErr != nil {
+				if encBufPtr != nil {
+					e.encPool.Put(encBufPtr)
+				}
 				e.pool.Put(bufPtr)
 				return nil, upErr
 			}
@@ -321,7 +385,10 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 			chunks = append(chunks, entry)
 			offset += nBytes
 
-			// Return buffer to pool after upload
+			// Return buffers to pools after upload
+			if encBufPtr != nil {
+				e.encPool.Put(encBufPtr)
+			}
 			e.pool.Put(bufPtr)
 		}
 
@@ -431,21 +498,37 @@ func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.Chunk
 					return fmt.Errorf("chunk %d/%d: chunk is encrypted but no password was provided", i+1, len(sorted))
 				}
 
-				// For GCM decryption, we still need it in memory to authenticate.
-				// However, at least we didn't hold it in memory while downloading over network.
-				chunkData, err := io.ReadAll(tmpFileRead)
+				info, err := tmpFileRead.Stat()
 				if err != nil {
+					return fmt.Errorf("chunk %d/%d: failed to stat tmp file: %v", i+1, len(sorted), err)
+				}
+
+				bufPtr := e.pool.Get().(*[]byte)
+				chunkData := (*bufPtr)[:0]
+				if int64(cap(chunkData)) < info.Size() {
+					newBuf := make([]byte, 0, info.Size())
+					chunkData = newBuf
+					bufPtr = &newBuf
+				}
+
+				chunkData = chunkData[:info.Size()]
+				if _, err := io.ReadFull(tmpFileRead, chunkData); err != nil {
+					e.pool.Put(bufPtr)
 					return fmt.Errorf("chunk %d/%d: failed to read encrypted chunk from disk: %v", i+1, len(sorted), err)
 				}
 
 				decrypted, err := decryptAES(chunkData, password)
 				if err != nil {
+					e.pool.Put(bufPtr)
 					return fmt.Errorf("chunk %d/%d: decryption failed: %v", i+1, len(sorted), err)
 				}
 
 				if _, err := dst.Write(decrypted); err != nil {
+					e.pool.Put(bufPtr)
 					return fmt.Errorf("chunk %d/%d: write to disk failed: %v", i+1, len(sorted), err)
 				}
+
+				e.pool.Put(bufPtr)
 			} else {
 				// Fast path for unencrypted: just io.Copy from tmp file to destination
 				if _, err := io.Copy(dst, tmpFileRead); err != nil {
@@ -475,8 +558,15 @@ func DeriveKey(passphrase []byte, salt []byte) ([]byte, error) {
 
 // encryptAES encrypts data using AES-256-GCM with a key derived from the passphrase and a random salt.
 // Prepend format: `TLM1` (magic bytes) + 16 bytes salt + nonce + ciphertext
-func encryptAES(plaintext []byte, passphrase []byte) ([]byte, error) {
-	salt := make([]byte, 16)
+// encryptAES encrypts data using AES-256-GCM with a key derived from the passphrase and a random salt.
+// Prepend format: `TLM1` (magic bytes) + 16 bytes salt + nonce + ciphertext
+func (e *Engine) encryptAES(plaintext []byte, passphrase []byte, outBuf []byte, scratch []byte) ([]byte, error) {
+	if len(scratch) < 28 {
+		return nil, fmt.Errorf("scratch buffer too small")
+	}
+	salt := scratch[0:16]
+	nonce := scratch[16:28]
+
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return nil, err
 	}
@@ -496,13 +586,12 @@ func encryptAES(plaintext []byte, passphrase []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonce := make([]byte, gcm.NonceSize())
 	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
 
 	// Format: TLM1 + salt + nonce + sealed
-	out := make([]byte, 0, 4+len(salt)+len(nonce)+len(plaintext)+gcm.Overhead())
+	out := outBuf[:0]
 	out = append(out, []byte("TLM1")...)
 	out = append(out, salt...)
 	out = append(out, nonce...)
@@ -541,7 +630,7 @@ func decryptAES(ciphertext []byte, passphrase []byte) ([]byte, error) {
 
 		nonce := ciphertext[20:20+nonceSize]
 		sealed := ciphertext[20+nonceSize:]
-		return gcm.Open(nil, nonce, sealed, nil)
+		return gcm.Open(sealed[:0], nonce, sealed, nil)
 	}
 
 	// Legacy format (deterministic salt)
@@ -569,5 +658,5 @@ func decryptAES(ciphertext []byte, passphrase []byte) ([]byte, error) {
 	}
 
 	nonce, sealed := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	return gcm.Open(nil, nonce, sealed, nil)
+	return gcm.Open(sealed[:0], nonce, sealed, nil)
 }

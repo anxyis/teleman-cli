@@ -19,7 +19,12 @@ foreach ($p in $platforms) {
     $env:GOOS = $p.os
     $env:GOARCH = $p.arch
     # -s -w: Omit the symbol table and debug information to reduce binary size.
-    go build -ldflags="-s -w" -o $out main.go
+    if ($p.os -eq "linux") {
+        # Compile Linux binaries with -buildmode=pie so they work on both standard Linux and Android/Termux
+        go build -buildmode=pie -ldflags="-s -w" -o $out main.go
+    } else {
+        go build -ldflags="-s -w" -o $out main.go
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Build failed for $($p.os)/$($p.arch)"
         exit $LASTEXITCODE

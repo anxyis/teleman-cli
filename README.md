@@ -74,7 +74,10 @@ teleman tree cloud:/
 # Send a notification message to a target
 teleman message backup: "Sync job finished at $(date)"
 
-# Update teleman to the latest version
+# Print version and check for updates
+teleman version
+
+# Update teleman to the latest version natively
 teleman update
 ```
 

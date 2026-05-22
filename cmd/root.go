@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -23,9 +21,10 @@ import (
 	"github.com/teleman-cli/teleman/internal/models"
 	syncpkg "github.com/teleman-cli/teleman/internal/sync"
 	"github.com/teleman-cli/teleman/internal/telegram"
+	"github.com/teleman-cli/teleman/internal/updater"
 )
 
-const AppVersion = "v1.1.8"
+const AppVersion = "v1.1.9"
 
 // Global context with cancellation — wired to SIGINT/SIGTERM for graceful shutdown.
 // All long-running operations check this context between iterations.
@@ -703,48 +702,35 @@ Thumbs.db
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update Teleman to the latest version",
-	Long: `Checks for the latest release on GitHub using the 'gh' CLI and 
-updates the teleman binary in-place. Requires GitHub CLI (gh) installed.`,
+	Long: `Checks for the latest release on GitHub and natively updates 
+the teleman binary in-place without requiring external tools.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("Checking for updates via GitHub CLI...")
+		fmt.Println("Checking for updates...")
 		
-		osName := runtime.GOOS
-		arch := runtime.GOARCH
-		if arch == "x86_64" {
-			arch = "amd64"
-		} else if arch == "aarch64" {
-			arch = "arm64"
-		}
-		
-		ext := ""
-		if osName == "windows" {
-			ext = ".exe"
-		}
-		
-		targetAsset := fmt.Sprintf("teleman-%s-%s%s", osName, arch, ext)
-		
-		exePath, err := os.Executable()
+		release, err := updater.CheckUpdate(AppVersion)
 		if err != nil {
-			return fmt.Errorf("failed to get executable path: %v", err)
+			return fmt.Errorf("failed to check for updates: %v", err)
 		}
 		
-		if _, err := exec.LookPath("gh"); err != nil {
-			return fmt.Errorf("GitHub CLI (gh) is required. Please install it: https://cli.github.com/")
-		}
-		
-		tagOut, err := exec.Command("gh", "release", "view", "-R", "anxyis/teleman-cli", "--json", "tagName", "-q", ".tagName").Output()
-		if err != nil {
-			return fmt.Errorf("failed to fetch latest release info. Make sure you are authenticated with 'gh auth login'. Error: %v", err)
-		}
-		latestTag := strings.TrimSpace(string(tagOut))
-		
-		if latestTag == AppVersion {
-			fmt.Printf("Teleman is already up-to-date (%s). Skipping update.\n", AppVersion)
+		if release == nil {
+			fmt.Printf("No updates available. You are running the latest version (%s).\n", AppVersion)
 			return nil
 		}
 		
-		fmt.Printf("Updating from %s to %s...\n", AppVersion, latestTag)
-		fmt.Printf("Downloading %s...\n", targetAsset)
+		fmt.Printf("Update available: %s → %s\n", AppVersion, release.TagName)
+		
+		targetAsset := updater.GetAssetFileName()
+		var assetToDownload *updater.Asset
+		for i, asset := range release.Assets {
+			if asset.Name == targetAsset {
+				assetToDownload = &release.Assets[i]
+				break
+			}
+		}
+		
+		if assetToDownload == nil {
+			return fmt.Errorf("failed to find asset '%s' in release %s", targetAsset, release.TagName)
+		}
 		
 		tmpDir, err := os.MkdirTemp("", "teleman-update-*")
 		if err != nil {
@@ -752,89 +738,54 @@ updates the teleman binary in-place. Requires GitHub CLI (gh) installed.`,
 		}
 		defer os.RemoveAll(tmpDir)
 		
-		dlCmd := exec.Command("gh", "release", "download", "-R", "anxyis/teleman-cli", "-p", targetAsset, "--clobber", "-D", tmpDir)
-		dlCmd.Stdout = os.Stdout
-		dlCmd.Stderr = os.Stderr
-		if err := dlCmd.Run(); err != nil {
+		newBinaryPath := filepath.Join(tmpDir, targetAsset)
+		
+		var lastReported int
+		onProgress := func(downloaded, total int64) {
+			if total == 0 {
+				return
+			}
+			percent := int((float64(downloaded) / float64(total)) * 100)
+			if percent != lastReported && percent%5 == 0 {
+				fmt.Printf("\rDownloading %s... [%d%%]", targetAsset, percent)
+				lastReported = percent
+			}
+		}
+		
+		fmt.Printf("Downloading %s... [0%%]", targetAsset)
+		if err := updater.DownloadAsset(assetToDownload, newBinaryPath, onProgress); err != nil {
+			fmt.Println()
 			return fmt.Errorf("failed to download update asset: %v", err)
 		}
+		fmt.Println()
 		
-		newBinaryPath := filepath.Join(tmpDir, targetAsset)
-		if _, err := os.Stat(newBinaryPath); os.IsNotExist(err) {
-			return fmt.Errorf("downloaded asset not found at %s", newBinaryPath)
+		exePath, err := updater.GetExePath()
+		if err != nil {
+			return fmt.Errorf("failed to get current executable path: %v", err)
 		}
 		
-		if osName != "windows" {
-			os.Chmod(newBinaryPath, 0755)
+		fmt.Println("Installing update...")
+		if err := updater.ApplyUpdate(newBinaryPath, exePath); err != nil {
+			return fmt.Errorf("failed to install update: %v", err)
 		}
 		
-		fmt.Printf("Installing to %s...\n", exePath)
-		
-		if osName == "windows" {
-			oldPath := exePath + ".old"
-			os.Remove(oldPath)
-			if err := os.Rename(exePath, oldPath); err != nil {
-				return fmt.Errorf("failed to rename running executable: %v", err)
-			}
-			if err := copyFile(newBinaryPath, exePath); err != nil {
-				return fmt.Errorf("failed to copy new executable: %v", err)
-			}
-		} else {
-			// Linux/macOS logic: avoid "text file busy" and EXDEV cross-device links
-			// by copying to the same filesystem first, then atomically renaming.
-			tmpExePath := exePath + ".tmp"
-			
-			if err := copyFile(newBinaryPath, tmpExePath); err != nil {
-				if os.IsPermission(err) {
-					fmt.Println("Write permission denied. Attempting to use sudo to install...")
-					// Execute copy, chmod, and atomic mv under sudo
-					installScript := fmt.Sprintf("cp %s %s && chmod 755 %s && mv %s %s", newBinaryPath, tmpExePath, tmpExePath, tmpExePath, exePath)
-					sudoCmd := exec.Command("sudo", "sh", "-c", installScript)
-					sudoCmd.Stdin = os.Stdin
-					sudoCmd.Stdout = os.Stdout
-					sudoCmd.Stderr = os.Stderr
-					if err := sudoCmd.Run(); err != nil {
-						return fmt.Errorf("sudo installation failed: %v", err)
-					}
-					fmt.Printf("Teleman updated successfully to %s!\n", latestTag)
-					return nil
-				}
-				return fmt.Errorf("failed to copy update to destination filesystem: %v", err)
-			}
-			
-			// Set executable permissions on the tmp file
-			if err := os.Chmod(tmpExePath, 0755); err != nil {
-				os.Remove(tmpExePath)
-				return fmt.Errorf("failed to set executable permissions: %v", err)
-			}
-			
-			// Atomically replace the running executable
-			if err := os.Rename(tmpExePath, exePath); err != nil {
-				os.Remove(tmpExePath)
-				return fmt.Errorf("failed to atomically replace executable: %v", err)
-			}
-		}
-		
-		fmt.Printf("Teleman updated successfully to %s!\n", latestTag)
+		fmt.Println("Update complete! → restart teleman")
 		return nil
 	},
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the current version of Teleman",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("Teleman %s\n", AppVersion)
+		
+		// Optional: Quickly check if an update is available without failing
+		release, err := updater.CheckUpdate(AppVersion)
+		if err == nil && release != nil {
+			fmt.Printf("\nUpdate available: %s! Run 'teleman update' to install.\n", release.TagName)
+		}
+	},
 }
 
 func addCommonFlags(cmd *cobra.Command) {
@@ -885,6 +836,7 @@ func init() {
 	rootCmd.AddCommand(purgeCmd)
 	rootCmd.AddCommand(messageCmd)
 	rootCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(versionCmd)
 	
 	ignoreCmd.AddCommand(ignoreInitCmd)
 	rootCmd.AddCommand(ignoreCmd)

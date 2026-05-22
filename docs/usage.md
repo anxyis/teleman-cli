@@ -122,8 +122,14 @@ teleman message backup: "Backup complete"
 cat report.txt | teleman message remote:
 ```
 
+### Check Version (`version`)
+Prints the current version of the CLI and checks if a newer update is available.
+```bash
+teleman version
+```
+
 ### Update Teleman (`update`)
-Updates the CLI to the latest version via GitHub CLI (`gh`).
+Updates the CLI to the latest version natively and in-place (no external dependencies like `gh` CLI are required).
 ```bash
 teleman update
 ```

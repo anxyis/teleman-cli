@@ -34,7 +34,7 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
     - [Tuning for a Local Bot API Server](#tuning-for-a-local-bot-api-server)
     - [Tuning for Telegram's Cloud API](#tuning-for-telegrams-cloud-api)
 12. [Sending Messages (`message`)](#12-sending-messages-message)
-13. [Updating Teleman (`update`)](#13-updating-teleman-update)
+13. [Updating & Versioning (`update`, `version`)](#13-updating--versioning-update-version)
 14. [Output Control](#14-output-control)
 15. [Common Scenario Recipes](#15-common-scenario-recipes)
 16. [Flag Reference Table](#16-flag-reference-table)
@@ -537,22 +537,41 @@ tail -n 20 error.log | teleman message dev_team:
 
 ---
 
-## 13. Updating Teleman (`update`)
+## 13. Updating & Versioning (`update`, `version`)
 
-Teleman can update itself to the latest version directly from GitHub. This ensures you always have the latest features, bug fixes, and security patches.
+Teleman features a native, zero-dependency self-update and versioning system. It communicates directly with public GitHub APIs to detect, download, and safely install updates in-place.
 
-### Requirements
-- **GitHub CLI (`gh`)**: The update command uses the `gh` tool to securely fetch release assets.
-- **Authentication**: You must be logged in via `gh auth login`.
+### Checking the Current Version (`version`)
 
-### Running the Update
+You can view your currently running version by executing:
 
 ```bash
-# Check for updates and install if a newer version is available
+teleman version
+```
+
+This prints your version and performs a lightweight, non-blocking check against the latest release on GitHub:
+
+```text
+Teleman v1.1.8
+
+Update available: v1.1.9! Run 'teleman update' to install.
+```
+
+### Performing a Self-Update (`update`)
+
+To update Teleman to the latest available version, simply run:
+
+```bash
 teleman update
 ```
 
-If you are already on the latest version, Teleman will notify you and skip the download.
+#### How it works:
+1. **Zero External Requirements**: Does **not** require the GitHub CLI (`gh`) or any local active authentications.
+2. **OS/Arch Detection**: Automatically detects your runtime operating system (Windows, Linux, Termux) and CPU architecture (AMD64, ARM64).
+3. **Safe In-Place Replacement**:
+   - **Unix (Linux/macOS/Termux)**: Downloads the new binary to a secure temporary directory, copies permissions, and performs an atomic in-place rename. If write permissions to the active path are denied (e.g. `/usr/local/bin`), it automatically triggers a passwordless `sudo` helper to apply the update.
+   - **Windows**: Renames the active executable to a `.old` file (to bypass active-process file locks) and drops the new binary in its place. The old `.old` files are automatically cleaned up.
+4. **Dynamic Progress Indicator**: Displays real-time download completion percentages directly in your terminal.
 
 ---
 

@@ -4,32 +4,36 @@ This guide provides detailed instructions on how to install and set up Teleman o
 
 ## 🪟 Windows Installation {#windows}
 
-To install Teleman for the first time, download the binary and place it in your PATH. Since the repository is private, you can use the GitHub CLI (`gh`):
+To install Teleman for the first time, download the pre-compiled binary from the [Releases](https://github.com/anxyis/teleman-cli/releases) page and place it in your `PATH`. 
+
+Alternatively, you can download the latest binary directly via PowerShell:
 
 ```powershell
-gh release download -R anxyis/teleman-cli -p "teleman-windows-amd64.exe" -O teleman.exe
+Invoke-WebRequest -Uri "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-windows-amd64.exe" -OutFile "teleman.exe"
 ```
 
-*(Alternatively, manually download `teleman-windows-amd64.exe` from the [Releases](https://github.com/anxyis/teleman-cli/releases) page).*
+*(If you have the GitHub CLI (`gh`) installed, you can also use: `gh release download -R anxyis/teleman-cli -p "teleman-windows-amd64.exe" -O teleman.exe`)*
 
 ## 🐧 Linux Installation {#linux}
 
-To install Teleman for the first time, download the binary and place it in `/usr/local/bin`.
+To install Teleman for the first time, download the binary for your architecture and place it in `/usr/local/bin`.
 
+Using `curl`:
 ```bash
-gh release download -R anxyis/teleman-cli -p "teleman-linux-amd64" -O teleman
+curl -L -o teleman "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-linux-amd64"
 chmod +x teleman
 sudo mv teleman /usr/local/bin/
 ```
 
-*(Alternatively, download the `teleman-linux-amd64` binary manually from [Releases](https://github.com/anxyis/teleman-cli/releases))*
+*(Alternatively, download the `teleman-linux-amd64` binary manually from the [Releases](https://github.com/anxyis/teleman-cli/releases) page, or via `gh`: `gh release download -R anxyis/teleman-cli -p "teleman-linux-amd64" -O teleman`)*
 
 ## 📱 Termux (Android) Installation {#termux}
 
-In Termux, download the ARM64 version to your `$PREFIX/bin`.
+In Termux, download the ARM64 version and place it in your `$PREFIX/bin`.
 
+Using `curl`:
 ```bash
-gh release download -R anxyis/teleman-cli -p "teleman-linux-arm64" -O teleman
+curl -L -o teleman "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-linux-arm64"
 chmod +x teleman
 mv teleman $PREFIX/bin/
 ```
@@ -38,7 +42,7 @@ mv teleman $PREFIX/bin/
 
 ## 🔄 Updating Teleman
 
-Teleman features a **Native Go Self-Update System** (introduced in v1.1.2). You no longer need to manually download binaries or pipe installation scripts.
+Teleman features a **Zero-Dependency Native Self-Update System** (fully overhauled in v1.1.8). You no longer need to have the GitHub CLI (`gh`) installed, be authenticated, or manually download and replace binaries.
 
 Simply run:
 ```bash
@@ -47,9 +51,18 @@ teleman update
 
 This command will automatically:
 1. Detect your OS and Architecture.
-2. Check the GitHub API for the latest release.
-3. Securely download the correct binary directly to a temporary folder.
-4. Perform an in-place atomic replacement of the currently running executable (including automatic `sudo` escalation on Linux if write permissions are denied, and `.old` renaming on Windows).
+2. Query the public GitHub Releases API for the latest release version.
+3. Securely download the correct pre-compiled binary directly into a temporary folder.
+4. Perform an in-place atomic replacement of the currently running executable (with automated `sudo` escalation on Linux if write permissions are denied, and safe `.old` renaming on Windows).
+
+## ℹ️ Checking Version
+
+You can check your installed version at any time using:
+```bash
+teleman version
+```
+
+This will print your current version and automatically perform a lightweight, non-blocking check in the background to alert you if a newer version is available on GitHub.
 
 ---
 

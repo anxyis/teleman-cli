@@ -26,14 +26,32 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
 
 ---
 
-## 🚀 Installation
+## 🚀 Quick Installation
 
-Teleman is distributed as a single standalone binary. No external dependencies or Go runtimes are required.
+Teleman is distributed as a single standalone binary with zero external dependencies.
 
-- 🪟 **[How to install in Windows](docs/installation.md#windows)**
-- 🐧 **[How to install in Linux](docs/installation.md#linux)**
-- 📱 **[How to install in Termux](docs/installation.md#termux)**
-- 🛠️ **[Build from Source](docs/installation.md#building-from-source)**
+### 🪟 Windows (PowerShell)
+```powershell
+Invoke-WebRequest -Uri "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-windows-amd64.exe" -OutFile "teleman.exe"
+```
+
+### 🐧 Linux (cURL)
+```bash
+curl -L -o teleman "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-linux-amd64" && chmod +x teleman && sudo mv teleman /usr/local/bin/
+```
+
+### 📱 Termux (cURL)
+```bash
+curl -L -o teleman "https://github.com/anxyis/teleman-cli/releases/latest/download/teleman-linux-arm64" && chmod +x teleman && mv teleman $PREFIX/bin/
+```
+
+---
+
+For platform-specific instructions, alternative methods, or detailed configuration, check out our guides:
+- 🪟 **[Detailed Windows Setup](docs/installation.md#windows)**
+- 🐧 **[Detailed Linux Setup](docs/installation.md#linux)**
+- 📱 **[Detailed Termux Setup](docs/installation.md#termux)**
+- 🛠️ **[Build from Source Guide](docs/installation.md#building-from-source)**
 
 > 📖 For first-time setup (Bot Token, Channel IDs), follow the **[Initialization Guide](docs/installation.md#initial-configuration)**.
 

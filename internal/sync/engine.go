@@ -42,6 +42,9 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 		return err
 	}
 
+	// Dynamically configure HTTP transport pooling to prevent socket starvation
+	tctx.Client.SetConcurrency(s.opts.Checkers + s.opts.Transfers)
+
 	engine := chunker.NewEngineWithSize(tctx.Client, s.opts.MediaMode, s.opts.ChunkSize)
 
 	// Acquire distributed lock
@@ -175,6 +178,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 
 	var uploaded atomic.Int32
 	var errors atomic.Int32
+	var warnings atomic.Int32
 
 	pm := progress.NewManager(ctx, len(uploadList), "Syncing")
 
@@ -198,6 +202,13 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 
 				f, err := os.Open(task.LocalPath)
 				if err != nil {
+					if os.IsNotExist(err) || os.IsPermission(err) {
+						logger.Warn("      [Warning] Skipping missing or unreadable file: %s", task.LocalPath)
+						warnings.Add(1)
+						skipped.Add(1)
+						pm.IncrementOverall()
+						continue
+					}
 					logger.Error("      [Error] Failed to open %s: %v", task.LocalPath, err)
 					errors.Add(1)
 					pm.IncrementOverall()
@@ -250,7 +261,11 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 		logger.Warn("=> Sync interrupted. Saving partial progress...")
 	}
 
-	logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors", uploaded.Load()-errors.Load(), skipped.Load(), errors.Load())
+	warnStr := ""
+	if warnings.Load() > 0 {
+		warnStr = fmt.Sprintf(", %d Warnings", warnings.Load())
+	}
+	logger.Success("=> Sync Summary: %d Uploaded, %d Skipped, %d Errors%s", uploaded.Load()-errors.Load()-warnings.Load(), skipped.Load(), errors.Load(), warnStr)
 
 	logger.Step("=> Committing new index to Telegram...")
 	if err := tctx.IdxManager.PushVersion(idx); err != nil {
@@ -258,8 +273,17 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 	}
 
 	logger.Success("=> Sync operation completed successfully.")
-	if errors.Load() > 0 {
-		return fmt.Errorf("completed with %d upload errors", errors.Load())
+	
+	errs := errors.Load()
+	if errs > 0 {
+		// Used to determine exit code 1 (Recoverable errors)
+		return fmt.Errorf("completed with %d upload errors", errs)
 	}
+	
+	// If it was cancelled, return the cancellation error (exit code 2)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	
 	return nil
 }

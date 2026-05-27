@@ -102,7 +102,7 @@ Examples:
 		}
 
 		if err := engine.Run(globalCtx, source, target); err != nil {
-			return fmt.Errorf("sync error: %v", err)
+			return fmt.Errorf("sync error: %w", err)
 		}
 		return nil
 	},
@@ -870,6 +870,9 @@ func Execute() {
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if strings.Contains(err.Error(), "context canceled") {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }

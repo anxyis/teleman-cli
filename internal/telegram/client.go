@@ -4,18 +4,99 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/teleman-cli/teleman/internal/models"
 )
+
+// ErrFatal represents a critical error that should immediately abort the sync.
+var ErrFatal = errors.New("fatal error")
+
+// ErrMissingLocal represents a local file that vanished or became unreadable during sync.
+var ErrMissingLocal = errors.New("missing local file")
+
+// TransportPacer implements a lightweight degraded mode.
+// If the transport throws transient errors, the Pacer globally increases a penalty sleep
+// causing all workers to voluntarily yield before hitting the network again.
+type TransportPacer struct {
+	consecutiveErrors atomic.Int32
+}
+
+// AddError records a transient error and calculates a backoff duration.
+func (p *TransportPacer) AddError() {
+	p.consecutiveErrors.Add(1)
+}
+
+// Reset clears the penalty state.
+func (p *TransportPacer) Reset() {
+	p.consecutiveErrors.Store(0)
+}
+
+// Wait applies a global backpressure sleep if the system is in a degraded state.
+func (p *TransportPacer) Wait(ctx context.Context) error {
+	errs := p.consecutiveErrors.Load()
+	if errs == 0 {
+		return nil
+	}
+	
+	// Calculate degraded sleep (exponential but capped at 10 seconds)
+	base := math.Pow(1.5, float64(errs))
+	if base > 10 {
+		base = 10
+	}
+	
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(base) * time.Second):
+		return nil
+	}
+}
+
+// IsTransientNetworkError checks if the error is a retriable network drop.
+func IsTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// Unwrap the error
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	
+	errString := strings.ToLower(err.Error())
+	retriablePhrases := []string{
+		"wsaeconnaborted",
+		"connectex: an established connection was aborted",
+		"eof",
+		"unexpected eof",
+		"connection reset by peer",
+		"connection refused",
+		"client.timeout",
+		"tls: use of closed connection",
+		"use of closed network connection",
+	}
+	
+	for _, phrase := range retriablePhrases {
+		if strings.Contains(errString, phrase) {
+			return true
+		}
+	}
+	
+	return false
+}
 
 // Client handles interaction with the Telegram Bot API.
 type Client struct {
@@ -23,6 +104,7 @@ type Client struct {
 	APIHost        string // e.g. "https://api.telegram.org" or a local Bot API server
 	FileServerHost string // e.g. "http://192.168.0.7:9000" — separate file server for downloads (local API only)
 	HTTPClient     *http.Client
+	Pacer          *TransportPacer
 }
 
 // testEndpoint checks if a URL is reachable within a short timeout.
@@ -114,6 +196,21 @@ func NewSmartClient(token string, apiHosts models.HostMap, fileHosts models.Host
 			Transport: transport,
 			Timeout:   30 * time.Minute,
 		},
+		Pacer:          &TransportPacer{},
+	}
+}
+
+// SetConcurrency dynamically tunes the transport pooling to prevent socket starvation under high load.
+func (c *Client) SetConcurrency(n int) {
+	if t, ok := c.HTTPClient.Transport.(*http.Transport); ok {
+		// Double the connection limit to allow ample room for keepalives
+		conns := n * 2
+		if conns < 100 {
+			conns = 100 // Fallback minimum
+		}
+		t.MaxIdleConnsPerHost = conns
+		t.MaxIdleConns = conns * 2
+		t.MaxConnsPerHost = conns
 	}
 }
 
@@ -243,21 +340,36 @@ func (c *Client) SendDocumentCtx(ctx context.Context, chatID string, threadID st
 		}
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 
+		// Apply global backpressure if transport is degraded
+		if err := c.Pacer.Wait(ctx); err != nil {
+			return "", 0, err
+		}
+
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
-			// Check if context was cancelled
 			if ctx.Err() != nil {
 				return "", 0, fmt.Errorf("operation cancelled: %w", ctx.Err())
+			}
+			if IsTransientNetworkError(err) {
+				c.Pacer.AddError()
+				select {
+				case <-ctx.Done():
+					return "", 0, ctx.Err()
+				case <-time.After(backoff(attempt)):
+				}
+				continue
 			}
 			return "", 0, err
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
+			c.Pacer.AddError()
 			c.handleRateLimit(resp)
 			resp.Body.Close()
 			continue
 		}
 
+		c.Pacer.Reset()
 		defer resp.Body.Close()
 
 		var result struct {
@@ -344,20 +456,36 @@ func (c *Client) SendMediaCtx(ctx context.Context, chatID string, threadID strin
 		}
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 
+		// Apply global backpressure if transport is degraded
+		if err := c.Pacer.Wait(ctx); err != nil {
+			return "", 0, err
+		}
+
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", 0, fmt.Errorf("operation cancelled: %w", ctx.Err())
 			}
+			if IsTransientNetworkError(err) {
+				c.Pacer.AddError()
+				select {
+				case <-ctx.Done():
+					return "", 0, ctx.Err()
+				case <-time.After(backoff(attempt)):
+				}
+				continue
+			}
 			return "", 0, err
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
+			c.Pacer.AddError()
 			c.handleRateLimit(resp)
 			resp.Body.Close()
 			continue
 		}
 
+		c.Pacer.Reset()
 		defer resp.Body.Close()
 		var result struct {
 			Ok     bool                   `json:"ok"`

@@ -18,7 +18,7 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
    - [Whole Directories](#whole-directories)
    - [Encrypted Uploads](#encrypted-uploads)
    - [Archive Mode (Streaming ZIP / TGZ)](#archive-mode-streaming-zip--tgz)
-   - [Media Mode (Spotify-Style)](#media-mode-spotify-style)
+   - [Media Mode (Always-On)](#media-mode-always-on)
    - [Dry Run (Preview Changes)](#dry-run-preview-changes)
 5. [Syncing Files (`sync`)](#5-syncing-files-sync)
 6. [Moving Files (`move`)](#6-moving-files-move)
@@ -203,19 +203,22 @@ teleman copy ./DatabaseDump/ remote:backups/ --zip --encrypt
 teleman copy ./node-app/ nas:apps/ --tgz
 ```
 
-### Media Mode (Spotify-Style)
+### Media Mode (Always-On)
 
-Routes eligible audio/video/image files through Telegram's native media APIs with ID3 tag extraction. Makes your channel look like a media player.
+Media routing is **enabled by default** for all transfer commands. Eligible audio, video, and image files are automatically routed through Telegram's native media APIs (`sendAudio`, `sendVideo`, `sendPhoto`) with ID3 tag extraction, cover art, and playback scrubbers — no flag needed.
 
 ```bash
-# Upload a music library with album art and title metadata
-teleman copy ./Music/ media_channel: --media
+# Upload a music library with album art and title metadata (media routing is automatic)
+teleman copy ./Music/ media_channel:
 
-# Upload a single album
-teleman copy ./Music/DaftPunk-RAM/ music_backup:albums/ --media
+# Upload a single album — audio files get native playback automatically
+teleman copy ./Music/DaftPunk-RAM/ music_backup:albums/
 
 # Upload video files with native Telegram video player support
-teleman copy ./Videos/Clips/ channel:videos/ --media
+teleman copy ./Videos/Clips/ channel:videos/
+
+# Force all files to be sent as plain documents (opt out of media routing)
+teleman copy ./Music/ media_channel: --sendasfile
 ```
 
 ### Custom Captions
@@ -465,6 +468,8 @@ If you're running [Telegram's Local Bot API Server](https://github.com/tdlib/tel
 
 > **Auto-Upgrade Logic**: If Teleman detects you are routed through a non-public endpoint (like your Local or Tailscale IP), it **automatically upgrades your Chunk Size limit from 49MB to 2GB**. It leverages an optimized reassembly engine with `sync.Pool` buffer recycling and direct-to-disk streaming to handle these massive payloads without exceeding your device's RAM.
 
+> **Dynamic Chunk Sizing**: When you haven't explicitly set `--cz`, Teleman dynamically sizes chunks to match the file size (up to 2GB) on Local API servers. This means a single 83MB FLAC file is uploaded as one piece — preserving native media playback — instead of being split into dead 49MB+33MB parts. The old 49MB default only applies to the public Telegram Cloud API.
+
 ```bash
 # Max throughput on local API: 16 upload threads, 32 checkers
 teleman copy ./4K_Videos/ local_nas: -t 16 -c 32
@@ -500,8 +505,8 @@ teleman copy ./SecretArchive/ vault: --encrypt -t 16 -c 32
 # Streaming ZIP of a big project with max workers
 teleman copy ./enterprise-app/ remote:snapshots/ --zip -t 16 -c 32
 
-# Syncing a media library with media routing and max workers
-teleman sync ./MusicLibrary/ media: --media -t 8 -c 16
+# Syncing a media library (media routing is automatic)
+teleman sync ./MusicLibrary/ media: -t 8 -c 16
 
 # Full verbose encrypted sync for debugging performance issues
 teleman sync ./TestData/ remote:test/ --encrypt -t 8 -c 16 -v
@@ -625,7 +630,7 @@ teleman download backup: ./full_restore/ -v
 
 ### Scenario: Share a media library via Telegram channel
 ```bash
-teleman copy ./MyMusicLibrary/ music_channel: --media -t 4 -c 8
+teleman copy ./MyMusicLibrary/ music_channel: -t 4 -c 8
 ```
 
 ### Scenario: Snapshot a web project before deploying
@@ -665,7 +670,7 @@ teleman download backup:projects/my-app/ ./restored/
 | `--encrypt` | `-e` | `false` | AES-256-GCM encrypt all chunks before upload (requires password) |
 | `--zip` | — | `false` | Stream source directory as a `.zip` archive |
 | `--tgz` | — | `false` | Stream source directory as a `.tar.gz` archive |
-| `--media` | — | `false` | Route audio/video/image via Telegram's native media APIs |
+| `--sendasfile` | — | `false` | Force all files to be sent as plain Telegram documents (disables default media routing) |
 | `--caption` | — | `""` | Add a caption to the first chunk (`auto` for metadata or custom string) |
 | `--force` | `-f` | `false` | Skip index diff — re-upload everything unconditionally |
 | `--dry-run` | — | `false` | Preview what would be transferred without making changes |

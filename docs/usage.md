@@ -163,8 +163,9 @@ Teleman natively utilizes all logical CPU cores and implements advanced memory m
 - **On-the-Fly Archiving**:
   - `--zip`: Condenses directory trees into `.zip` archives before chunking.
   - `--tgz`: Condenses directory trees into `.tar.gz` archives before chunking.
-- **Media Native UI (Spotify-Clone Mode)**:
-  - `--media`: Routes eligible single-chunk unencrypted files through Telegram's rich media endpoints (`/sendAudio`, `/sendVideo`, `/sendPhoto`). Extracts ID3 metadata (title, artist, album art) for audio files.
+- **Media Native UI (Always-On)**:
+  - Media routing is now **enabled by default** for all transfer commands. Eligible audio, video, and image files are automatically sent via Telegram's native media endpoints (`/sendAudio`, `/sendVideo`, `/sendPhoto`) with full ID3 metadata extraction, cover art, and playback scrubbers.
+  - `--sendasfile`: Forces all files to be sent as plain Telegram documents, bypassing media routing. Use this when you explicitly want document mode regardless of file type.
 - **Custom Captions**:
   - `--caption`: Adds a text caption to the first chunk of each file. Use `--caption auto` for automatic metadata (filename, size, date, #ext) or any custom string.
 - **Dynamic Progress Monitoring**:

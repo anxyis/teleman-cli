@@ -29,16 +29,18 @@ type Engine struct {
 	client      *telegram.Client
 	ChunkSize   int64
 	MediaMode   bool
+	AutoUpgrade bool // When true and on local API, override ChunkSize with dynamic sizing
 	pool        sync.Pool
 	encPool     sync.Pool
 	scratchPool sync.Pool
 }
 
-func newEngineWithPool(client *telegram.Client, mediaMode bool, chunkSize int64) *Engine {
+func newEngineWithPool(client *telegram.Client, mediaMode bool, chunkSize int64, autoUpgrade bool) *Engine {
 	return &Engine{
-		client:    client,
-		ChunkSize: chunkSize,
-		MediaMode: mediaMode,
+		client:      client,
+		ChunkSize:   chunkSize,
+		MediaMode:   mediaMode,
+		AutoUpgrade: autoUpgrade,
 		pool: sync.Pool{
 			New: func() interface{} {
 				// We don't allocate the full ChunkSize immediately to save memory for small files,
@@ -65,12 +67,14 @@ func newEngineWithPool(client *telegram.Client, mediaMode bool, chunkSize int64)
 
 // NewEngine creates a chunking engine with dynamic chunk limits.
 func NewEngine(client *telegram.Client, mediaMode bool) *Engine {
-	return newEngineWithPool(client, mediaMode, 0)
+	return newEngineWithPool(client, mediaMode, 0, false)
 }
 
 // NewEngineWithSize creates a chunking engine with an explicit chunk size.
-func NewEngineWithSize(client *telegram.Client, mediaMode bool, chunkSize int64) *Engine {
-	return newEngineWithPool(client, mediaMode, chunkSize)
+// If autoUpgrade is true and the target is a local API, the engine will
+// dynamically override the chunk size to prevent unnecessary splitting.
+func NewEngineWithSize(client *telegram.Client, mediaMode bool, chunkSize int64, autoUpgrade bool) *Engine {
+	return newEngineWithPool(client, mediaMode, chunkSize, autoUpgrade)
 }
 
 // ProcessStream chunks an io.Reader and uploads parts to telegram
@@ -109,11 +113,15 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 	}
 
 	currentChunkSize := e.ChunkSize
-	if currentChunkSize <= 0 {
-		isLocalAPI := !strings.Contains(e.client.APIHost, "api.telegram.org")
-		
+	isLocalAPI := !strings.Contains(e.client.APIHost, "api.telegram.org")
+
+	// Dynamic chunk sizing: activate when no explicit --cz was provided (ChunkSize <= 0)
+	// OR when AutoUpgrade is true (user left --cz at default) and we're on a local API.
+	useSmartSizing := currentChunkSize <= 0 || (e.AutoUpgrade && isLocalAPI)
+
+	if useSmartSizing {
 		if !isLocalAPI {
-			// Public API
+			// Public API: respect Telegram's 50MB upload limit
 			if totalSize >= 0 {
 				if totalSize <= 10*1024*1024 {
 					currentChunkSize = 2 * 1024 * 1024 // 2MB
@@ -126,16 +134,17 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 				currentChunkSize = 49 * 1024 * 1024
 			}
 		} else {
-			// Local API (Supports up to 2GB, we cap at 500MB to save RAM)
+			// Local API: supports up to 2GB natively — scale chunk size to file size
+			// so that media files fit in a single chunk whenever possible.
 			if totalSize >= 0 {
 				if totalSize <= 50*1024*1024 {
-					currentChunkSize = 5 * 1024 * 1024 // 5MB
+					currentChunkSize = totalSize + 1024 // Fit entire file in one chunk
 				} else if totalSize <= 500*1024*1024 {
-					currentChunkSize = 50 * 1024 * 1024 // 50MB
+					currentChunkSize = totalSize + 1024 // Fit entire file in one chunk
 				} else if totalSize <= 2*1024*1024*1024 {
-					currentChunkSize = 200 * 1024 * 1024 // 200MB
+					currentChunkSize = totalSize + 1024 // Fit entire file in one chunk
 				} else {
-					currentChunkSize = 1999 * 1024 * 1024 // 1999MB max to fully utilize local API
+					currentChunkSize = 1999 * 1024 * 1024 // 1999MB max for files exceeding 2GB
 				}
 			} else {
 				currentChunkSize = 1999 * 1024 * 1024

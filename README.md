@@ -17,7 +17,7 @@ It splits huge datasets into logical chunks, tracks their integrity across a uni
 - **AES-256-GCM Security (TLM1)**: Secure sensitive directories seamlessly. Every chunk uses a unique, random cryptographically secure salt to prevent key-reuse vulnerabilities. Backward compatibility with legacy encrypted files is natively maintained.
 - **Streaming Reassembly (OOM Protected)**: The reassembly engine streams downloads directly to disk, avoiding high RAM usage. This prevents crashes when handling massive files or large chunk sizes.
 - **Buffer Pooling**: Implements `sync.Pool` logic to recycle memory buffers, slashing GC overhead and improving throughput during concurrent operations.
-- **Native Media Semantics (`--media`)**: Converts Telegram into a fully native streaming platform! Uses pure-Go, non-blocking structural parsing to extract accurate durations, MP4 streaming hints, MKV dimensions, and ID3 tags with O(1) efficiency. No FFmpeg required!
+- **Native Media Semantics (Always-On)**: Media routing is enabled by default — Telegram becomes a fully native streaming platform! Audio files get ID3 metadata, cover art, and playback scrubbers. Video files get native streaming. Images get native display. Uses pure-Go, non-blocking structural parsing with O(1) efficiency. No FFmpeg required! Use `--sendasfile` to force plain document mode.
 - **Semantic Auto-Captions (`--caption auto`)**: Automatically structures parsed video/audio metadata into beautiful, readable Markdown captions in Telegram.
 - **On-the-Fly Archiving**: Streaming an entire web-project tree using `--zip` will stream a completely logical `.zip` directly into Telegram without wasting local I/O writing an intermediate archive onto disk.
 - **Smart Ignoring (`.telemanignore`)**: Natively supports excluding files, folders, and applying override negation rules (`!`) directly from your source directories during sync or copy operations.
@@ -100,7 +100,7 @@ The engine operates globally scaled concurrent worker pools. You can bind limits
 * `-c` : **Global Checkers** (Disk I/O traversal workers mapping the virtual index against real disk structures)
 * `-t` : **HTTP Transporters** (Parallel upload routines)
 * `--encrypt` : Force AES-256 sealing 
-* `--media` : Smart ID3 / Image media encapsulation routing natively formatted for Telegram UI
+* `--sendasfile` : Force all files to be sent as plain Telegram documents (bypasses the default media routing)
 * `--force` : Physically bypass the index check entirely and instantly overwrite chunks.
 * `-v` / `-q` : Detailed verbose traces for error debugging, or quiet suppression output mode.
 

@@ -567,7 +567,7 @@ var (
 	encrypt          bool
 	zipMode          bool
 	tgzMode          bool
-	mediaMode        bool
+	sendAsFile       bool
 	force            bool
 	dryRun           bool
 	confirm          bool
@@ -609,7 +609,7 @@ func buildTransferOptions(cmd *cobra.Command) (*models.TransferOptions, error) {
 		Encrypt:   encrypt,
 		ZipMode:   zipMode,
 		TgzMode:   tgzMode,
-		MediaMode: mediaMode,
+		MediaMode: !sendAsFile,
 		Force:            force,
 		DryRun:           dryRun,
 		Password:         password,
@@ -799,7 +799,7 @@ func addTransferFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&encrypt, "encrypt", "e", false, "Encrypt chunks with AES-256-GCM (requires password)")
 	cmd.Flags().BoolVar(&zipMode, "zip", false, "Compress source folder into streaming zip archive before chunking")
 	cmd.Flags().BoolVar(&tgzMode, "tgz", false, "Compress source folder into streaming tar.gz archive before chunking")
-	cmd.Flags().BoolVar(&mediaMode, "media", false, "Route eligible single-chunk files to Telegram's native media players (enables structural header parsing)")
+	cmd.Flags().BoolVar(&sendAsFile, "sendasfile", false, "Force all uploads as plain documents instead of native Telegram media")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force re-upload of existing files")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be transferred without making changes")
 	cmd.Flags().StringVar(&downloadPassword, "password", "", "Encryption password (prefer TELEMAN_PASSWORD env var)")

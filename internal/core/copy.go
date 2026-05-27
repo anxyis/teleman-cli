@@ -46,7 +46,7 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 		}
 	}
 
-	engine := chunker.NewEngineWithSize(tctx.Client, opts.MediaMode, opts.ChunkSize)
+	engine := chunker.NewEngineWithSize(tctx.Client, opts.MediaMode, opts.ChunkSize, opts.AutoUpgradeChunk)
 
 	// ── Archive mode (--zip or --tgz) ────────────────────────────────────────
 	// Archives are always a new upload — no pre-flight diff needed. Acquire the

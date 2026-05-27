@@ -2,6 +2,8 @@
 
 The Media Metadata layer (`internal/metadata`) enables Teleman to act as a **Telegram-native semantic sync engine** rather than a generic file sync tool, without bloating the binary or relying on external CGO bindings/FFmpeg.
 
+> **Note:** Media routing is now **always-on by default** for all transfer commands (`copy`, `sync`, `move`). No `--media` flag is needed — audio files automatically get ID3 metadata, cover art, and playback scrubbers; video files get native streaming; images get native display. Use `--sendasfile` to explicitly force plain document mode if needed.
+
 ## Core Philosophy
 
 1. **Telegram-Native**: Extracts only the specific metadata required to make media look perfect on Telegram (`duration`, `width`, `height`, `performer`, `title`, `thumb`).
@@ -43,3 +45,6 @@ Teleman generates 2-5 high-signal, normalized hashtags for every file to anchor 
 
 ## Filename Cleaning Fallback
 If tags are absent, the engine employs a graceful semantic filename cleaner that strips out dots, underscores, bracketed release tags (`[SubsPlease]`), and reformats TV notation (`S01E12` -> `— Episode 12`) to ensure that fallbacks remain perfectly readable.
+
+## Local API Dynamic Chunk Sizing
+When using a self-hosted Local Bot API server, Teleman dynamically sizes chunks to match the file size (up to 2GB), preventing unnecessary splitting. For example, an 83MB FLAC file on Local API is uploaded as a single piece — preserving native media playback and metadata — instead of being split into dead 49MB+33MB parts that lose all media semantics. The old 49MB default chunk size only applies when using the public Telegram Cloud API.

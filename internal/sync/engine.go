@@ -45,7 +45,7 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 	// Dynamically configure HTTP transport pooling to prevent socket starvation
 	tctx.Client.SetConcurrency(s.opts.Checkers + s.opts.Transfers)
 
-	engine := chunker.NewEngineWithSize(tctx.Client, s.opts.MediaMode, s.opts.ChunkSize)
+	engine := chunker.NewEngineWithSize(tctx.Client, s.opts.MediaMode, s.opts.ChunkSize, s.opts.AutoUpgradeChunk)
 
 	// Acquire distributed lock
 	if err := tctx.IdxManager.AcquireLock("", "sync"); err != nil {

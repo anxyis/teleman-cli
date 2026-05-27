@@ -76,7 +76,7 @@ func RunMove(ctx context.Context, sources []string, targetRaw string, opts *mode
 	}
 	defer mgr.ReleaseLock()
 
-	engine := chunker.NewEngineWithSize(client, opts.MediaMode, opts.ChunkSize)
+	engine := chunker.NewEngineWithSize(client, opts.MediaMode, opts.ChunkSize, opts.AutoUpgradeChunk)
 
 	logger.Step("=> Loading Virtual Index...")
 	idx, err := mgr.Load()

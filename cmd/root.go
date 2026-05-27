@@ -24,7 +24,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/updater"
 )
 
-const AppVersion = "v1.2.0"
+const AppVersion = "v1.2.1"
 
 // Global context with cancellation — wired to SIGINT/SIGTERM for graceful shutdown.
 // All long-running operations check this context between iterations.

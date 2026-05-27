@@ -24,7 +24,7 @@ import (
 	"github.com/teleman-cli/teleman/internal/updater"
 )
 
-const AppVersion = "v1.1.10"
+const AppVersion = "v1.2.0"
 
 // Global context with cancellation — wired to SIGINT/SIGTERM for graceful shutdown.
 // All long-running operations check this context between iterations.
@@ -799,11 +799,11 @@ func addTransferFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&encrypt, "encrypt", "e", false, "Encrypt chunks with AES-256-GCM (requires password)")
 	cmd.Flags().BoolVar(&zipMode, "zip", false, "Compress source folder into streaming zip archive before chunking")
 	cmd.Flags().BoolVar(&tgzMode, "tgz", false, "Compress source folder into streaming tar.gz archive before chunking")
-	cmd.Flags().BoolVar(&mediaMode, "media", false, "Route eligible small files to media endpoints")
+	cmd.Flags().BoolVar(&mediaMode, "media", false, "Route eligible single-chunk files to Telegram's native media players (enables structural header parsing)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force re-upload of existing files")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be transferred without making changes")
 	cmd.Flags().StringVar(&downloadPassword, "password", "", "Encryption password (prefer TELEMAN_PASSWORD env var)")
-	cmd.Flags().StringVar(&caption, "caption", "", "Custom caption string or 'auto' for semantic media/file captions")
+	cmd.Flags().StringVar(&caption, "caption", "", "Custom text caption or 'auto' for intelligent Telegram-native media/file captions and hashtags")
 }
 
 func init() {

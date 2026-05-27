@@ -223,8 +223,8 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 			var mediaInfo *metadata.MediaInfo
 
 			if len(chunks) == 0 && isEOF && len(password) == 0 && e.MediaMode {
-				// Parse structural metadata only if it's an unencrypted, single-chunk file and MediaMode is enabled
-				mediaInfo = metadata.Parse(bytes.NewReader(chunkData), filename)
+				// Extract media structural intelligence using the pure-Go metadata package
+				mediaInfo = metadata.Parse(bytes.NewReader(chunkData), filename, totalSize)
 			}
 
 			if len(chunks) == 0 && captionOpt != "" {

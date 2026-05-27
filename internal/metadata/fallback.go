@@ -2,7 +2,6 @@ package metadata
 
 import (
 	"path/filepath"
-	"strings"
 )
 
 // fallbackInfo ensures the MediaInfo has basic fields populated even if parsing failed.
@@ -22,6 +21,5 @@ func fallbackInfo(info *MediaInfo, filename string) *MediaInfo {
 }
 
 func fallbackTitle(filename string) string {
-	ext := filepath.Ext(filename)
-	return strings.TrimSuffix(filename, ext)
+	return CleanFilename(filepath.Base(filename))
 }

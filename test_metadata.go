@@ -26,10 +26,16 @@ func main() {
 			continue
 		}
 		
+		info, err := f.Stat()
+		size := int64(0)
+		if err == nil {
+			size = info.Size()
+		}
+		
 		fmt.Printf("Testing: %s\n", file.Name())
-		info := metadata.Parse(f, path)
-		fmt.Printf("Parsed Info: %+v\n", info)
-		fmt.Printf("Caption:\n%s\n", metadata.GenerateCaption(info, path))
+		mediaInfo := metadata.Parse(f, path, size)
+		fmt.Printf("Parsed Info: %+v\n", mediaInfo)
+		fmt.Printf("Caption:\n%s\n", metadata.GenerateCaption(mediaInfo, path))
 		fmt.Println("----")
 		f.Close()
 	}

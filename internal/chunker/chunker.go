@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dhowden/tag"
 	"github.com/teleman-cli/teleman/internal/logger"
+	"github.com/teleman-cli/teleman/internal/metadata"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/telegram"
 	"golang.org/x/crypto/scrypt"
@@ -218,23 +218,34 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 			var dataToUpload []byte
 			var encBufPtr *[]byte
 
-			// Determine caption for the first chunk only
+			// Determine caption and media info for the first chunk only
 			var currentCaption string
+			var mediaInfo *metadata.MediaInfo
+
+			if len(chunks) == 0 && isEOF && len(password) == 0 && e.MediaMode {
+				// Parse structural metadata only if it's an unencrypted, single-chunk file and MediaMode is enabled
+				mediaInfo = metadata.Parse(bytes.NewReader(chunkData), filename)
+			}
+
 			if len(chunks) == 0 && captionOpt != "" {
 				if captionOpt == "auto" {
-					parts := []string{filename}
-					if totalSize >= 0 {
-						parts = append(parts, formatSize(totalSize))
-					}
-					parts = append(parts, time.Now().Format("2006-01-02"))
+					if mediaInfo != nil {
+						currentCaption = metadata.GenerateCaption(mediaInfo, filename)
+					} else {
+						parts := []string{filename}
+						if totalSize >= 0 {
+							parts = append(parts, formatSize(totalSize))
+						}
+						parts = append(parts, time.Now().Format("2006-01-02"))
 
-					ext := strings.ToLower(filepath.Ext(filename))
-					if ext != "" {
-						// Remove dot and prepend hashtag
-						parts = append(parts, "#"+ext[1:])
-					}
+						ext := strings.ToLower(filepath.Ext(filename))
+						if ext != "" {
+							// Remove dot and prepend hashtag
+							parts = append(parts, "#"+ext[1:])
+						}
 
-					currentCaption = strings.Join(parts, "\n")
+						currentCaption = strings.Join(parts, "\n")
+					}
 				} else {
 					currentCaption = captionOpt
 				}
@@ -280,20 +291,19 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 				chunkName = fmt.Sprintf("%s.part%d", filename, len(chunks))
 			}
 
-			if e.MediaMode && len(chunks) == 0 && isEOF && !isEncrypted {
-				// Eligible for Media API — single-chunk, unencrypted, media mode on
-				ext := strings.ToLower(filepath.Ext(filename))
+			if mediaInfo != nil {
+				// Eligible for Media API
 				method := "sendDocument"
 				fieldName := "document"
 
-				switch ext {
-				case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp":
+				switch mediaInfo.Type {
+				case "photo":
 					method = "sendPhoto"
 					fieldName = "photo"
-				case ".mp4", ".mov", ".avi", ".mkv", ".webm":
+				case "video":
 					method = "sendVideo"
 					fieldName = "video"
-				case ".mp3", ".ogg", ".flac", ".m4a":
+				case "audio":
 					method = "sendAudio"
 					fieldName = "audio"
 				}
@@ -304,52 +314,50 @@ func (e *Engine) ProcessStreamCtx(ctx context.Context, chatID, threadID, filenam
 
 					if method == "sendAudio" {
 						params = make(map[string]string)
-						m, tErr := tag.ReadFrom(bytes.NewReader(chunkData))
-						if tErr == nil && m != nil {
-							if m.Title() != "" {
-								params["title"] = m.Title()
-							}
-							artist := m.Artist()
-							if artist == "" {
-								artist = m.AlbumArtist()
-							}
-							if artist != "" {
-								params["performer"] = artist
-							}
-							if pic := m.Picture(); pic != nil {
-								thumbData = pic.Data
-							}
+						if mediaInfo.Title != "" {
+							params["title"] = mediaInfo.Title
+						}
+						if mediaInfo.Performer != "" {
+							params["performer"] = mediaInfo.Performer
+						}
+						if mediaInfo.Duration > 0 {
+							params["duration"] = fmt.Sprintf("%d", mediaInfo.Duration)
+						}
+						if len(mediaInfo.ThumbData) > 0 {
+							thumbData = mediaInfo.ThumbData
 						}
 
-						// No metadata found — fall back to sendDocument to avoid empty audio UI
-						if len(params) == 0 {
-							logger.Debug("      [Media] %s → sendDocument (no ID3 tags found, falling back)", filename)
-							method = "sendDocument"
-							fieldName = "document"
-						} else {
-							logger.Debug("      [Media] %s → sendAudio (title=%q performer=%q thumb=%v)",
-								filename, params["title"], params["performer"], thumbData != nil)
+						logger.Debug("      [Media] %s → sendAudio (title=%q performer=%q duration=%d thumb=%v)",
+							filename, mediaInfo.Title, mediaInfo.Performer, mediaInfo.Duration, thumbData != nil)
+					} else if method == "sendVideo" {
+						params = make(map[string]string)
+						if mediaInfo.Width > 0 {
+							params["width"] = fmt.Sprintf("%d", mediaInfo.Width)
 						}
+						if mediaInfo.Height > 0 {
+							params["height"] = fmt.Sprintf("%d", mediaInfo.Height)
+						}
+						if mediaInfo.Duration > 0 {
+							params["duration"] = fmt.Sprintf("%d", mediaInfo.Duration)
+						}
+						if mediaInfo.SupportsStreaming {
+							params["supports_streaming"] = "true"
+						}
+						logger.Debug("      [Media] %s → sendVideo (width=%d height=%d duration=%d streaming=%v)",
+							filename, mediaInfo.Width, mediaInfo.Height, mediaInfo.Duration, mediaInfo.SupportsStreaming)
+					} else if method == "sendPhoto" {
+						logger.Debug("      [Media] %s → sendPhoto", filename)
 					}
 
-					if method != "sendDocument" {
-						if method == "sendPhoto" {
-							logger.Debug("      [Media] %s → sendPhoto", filename)
-						} else if method == "sendVideo" {
-							logger.Debug("      [Media] %s → sendVideo", filename)
-						}
-						fileID, msgID, upErr = e.client.SendMediaCtx(ctx, chatID, threadID, chunkName, chunkReader, method, fieldName, params, thumbData, currentCaption)
-						
-						if upErr != nil {
-							logger.Debug("      [Media] %s %s failed (%v) — falling back to sendDocument", filename, method, upErr)
-							chunkReader.Seek(0, io.SeekStart)
-							fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader, currentCaption)
-						}
-					} else {
+					fileID, msgID, upErr = e.client.SendMediaCtx(ctx, chatID, threadID, chunkName, chunkReader, method, fieldName, params, thumbData, currentCaption)
+					
+					if upErr != nil {
+						logger.Debug("      [Media] %s %s failed (%v) — falling back to sendDocument", filename, method, upErr)
+						chunkReader.Seek(0, io.SeekStart)
 						fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader, currentCaption)
 					}
 				} else {
-					// Extension not in any media category
+					// Fallback to sendDocument
 					logger.Debug("      [Media] %s → sendDocument (unsupported extension for media routing)", filename)
 					fileID, msgID, upErr = e.client.SendDocumentCtx(ctx, chatID, threadID, chunkName, chunkReader, currentCaption)
 				}

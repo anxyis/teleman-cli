@@ -803,7 +803,7 @@ func addTransferFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force re-upload of existing files")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be transferred without making changes")
 	cmd.Flags().StringVar(&downloadPassword, "password", "", "Encryption password (prefer TELEMAN_PASSWORD env var)")
-	cmd.Flags().StringVar(&caption, "caption", "", "Custom caption string or 'auto' for auto-generated caption")
+	cmd.Flags().StringVar(&caption, "caption", "", "Custom caption string or 'auto' for semantic media/file captions")
 }
 
 func init() {

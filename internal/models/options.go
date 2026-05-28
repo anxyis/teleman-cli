@@ -22,6 +22,20 @@ type TransferOptions struct {
 	PasswordCallback func() ([]byte, error) // Lazy evaluation for password prompting
 	AutoUpgradeChunk bool                   // Indicates if --cz was left at default and can be auto-upgraded for local APIs
 	Caption          string                 // Caption to add to the telegram message
+
+	// Filter rules
+	Includes       []string
+	Excludes       []string
+	MinSize        string
+	MaxSize        string
+	ModifiedAfter  string
+	ModifiedBefore string
+	
+	// Presets
+	Photos    bool
+	Videos    bool
+	Music     bool
+	Documents bool
 }
 
 // ParseChunkSize converts a human-readable size string (e.g., "49M", "1G", "512K")

@@ -16,6 +16,7 @@ import (
 
 	"github.com/teleman-cli/teleman/internal/config"
 	"github.com/teleman-cli/teleman/internal/core"
+	"github.com/teleman-cli/teleman/internal/filter"
 	"github.com/teleman-cli/teleman/internal/index"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
@@ -575,6 +576,18 @@ var (
 	quiet            bool
 	downloadPassword string
 	caption          string
+
+	// Filter variables
+	includes       []string
+	excludes       []string
+	minSize        string
+	maxSize        string
+	modifiedAfter  string
+	modifiedBefore string
+	presetPhotos   bool
+	presetVideos   bool
+	presetMusic    bool
+	presetDocs     bool
 )
 
 // buildTransferOptions converts CLI flags into a TransferOptions struct.
@@ -615,6 +628,17 @@ func buildTransferOptions(cmd *cobra.Command) (*models.TransferOptions, error) {
 		Password:         password,
 		AutoUpgradeChunk: cmd != nil && !cmd.Flags().Changed("cz"),
 		Caption:          caption,
+
+		Includes:       includes,
+		Excludes:       excludes,
+		MinSize:        minSize,
+		MaxSize:        maxSize,
+		ModifiedAfter:  modifiedAfter,
+		ModifiedBefore: modifiedBefore,
+		Photos:         presetPhotos,
+		Videos:         presetVideos,
+		Music:          presetMusic,
+		Documents:      presetDocs,
 	}, nil
 }
 
@@ -804,6 +828,19 @@ func addTransferFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be transferred without making changes")
 	cmd.Flags().StringVar(&downloadPassword, "password", "", "Encryption password (prefer TELEMAN_PASSWORD env var)")
 	cmd.Flags().StringVar(&caption, "caption", "", "Custom text caption or 'auto' for intelligent Telegram-native media/file captions and hashtags")
+
+	// Filter flags
+	cmd.Flags().StringSliceVar(&includes, "include", nil, "Include files matching pattern (e.g. *.flac)")
+	cmd.Flags().StringSliceVar(&excludes, "exclude", nil, "Exclude files matching pattern")
+	cmd.Flags().StringVar(&minSize, "min-size", "", "Only include files larger than size (e.g. 50M)")
+	cmd.Flags().StringVar(&maxSize, "max-size", "", "Only include files smaller than size (e.g. 1G)")
+	cmd.Flags().StringVar(&modifiedAfter, "modified-after", "", "Only include files modified after date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&modifiedBefore, "modified-before", "", "Only include files modified before date (YYYY-MM-DD)")
+	
+	cmd.Flags().BoolVar(&presetPhotos, "photos", false, "Use photos preset")
+	cmd.Flags().BoolVar(&presetVideos, "videos", false, "Use videos preset")
+	cmd.Flags().BoolVar(&presetMusic, "music", false, "Use music preset")
+	cmd.Flags().BoolVar(&presetDocs, "documents", false, "Use documents preset")
 }
 
 func init() {
@@ -859,6 +896,9 @@ func Execute() {
 	// between iterations, allowing clean lock release and partial index commits.
 	globalCtx, globalCancel = context.WithCancel(context.Background())
 	defer globalCancel()
+
+	// Ensure default filter presets exist
+	_ = filter.EnsureDefaultPresets()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

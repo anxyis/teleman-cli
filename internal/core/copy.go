@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/teleman-cli/teleman/internal/chunker"
-	"github.com/teleman-cli/teleman/internal/ignore"
+	"github.com/teleman-cli/teleman/internal/filter"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/progress"
@@ -170,10 +170,10 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 			continue
 		}
 
-		// Load .telemanignore for this source
-		ignorer := ignore.Load(source)
-		if ignorer.Loaded {
-			logger.Info("=> Using .telemanignore rules for %s", source)
+		pipeline, err := filter.BuildPipelineFromOptions(source, opts)
+		if err != nil {
+			logger.Warn("=> Failed to build filter pipeline for %s: %v", source, err)
+			continue
 		}
 
 		if info.IsDir() {
@@ -186,12 +186,20 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 					return nil
 				}
 
-				if ignorer.IsIgnored(rel) {
-					logger.Debug("   [Skipped by ignore] %s", rel)
-					if fi.IsDir() {
+				shouldProcess, pErr := pipeline.ShouldProcess(rel, fi)
+				if !shouldProcess {
+					if opts.DryRun {
+						_, reason := pipeline.EvaluateDryRun(rel, fi)
+						logger.Debug("   [EXCLUDED] %s (matched: %s)", rel, reason)
+					}
+					if pErr == filepath.SkipDir {
 						return filepath.SkipDir
 					}
 					return nil
+				}
+				if opts.DryRun && !fi.IsDir() {
+					_, reason := pipeline.EvaluateDryRun(rel, fi)
+					logger.Debug("   [INCLUDED] %s (matched: %s)", rel, reason)
 				}
 
 				if !fi.IsDir() {
@@ -210,7 +218,8 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 			})
 		} else {
 			rel := filepath.Base(source)
-			if !ignorer.IsIgnored(rel) {
+			shouldProcess, _ := pipeline.ShouldProcess(rel, info)
+			if shouldProcess {
 				vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
 				vPath = strings.TrimLeft(vPath, "/")
 				
@@ -220,9 +229,17 @@ func RunCopy(ctx context.Context, sources []string, targetRaw string, opts *mode
 				}
 				vPathMap[vPath] = source
 				
+				if opts.DryRun {
+					_, reason := pipeline.EvaluateDryRun(rel, info)
+					logger.Debug("   [INCLUDED] %s (matched: %s)", rel, reason)
+				}
+				
 				allFiles = append(allFiles, copyFileTask{localPath: source, virtualPath: vPath, fileInfo: info})
 			} else {
-				logger.Debug("   [Skipped by ignore] %s", rel)
+				if opts.DryRun {
+					_, reason := pipeline.EvaluateDryRun(rel, info)
+					logger.Debug("   [EXCLUDED] %s (matched: %s)", rel, reason)
+				}
 			}
 		}
 	}

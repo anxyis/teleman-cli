@@ -11,7 +11,7 @@ import (
 
 	"github.com/teleman-cli/teleman/internal/chunker"
 	"github.com/teleman-cli/teleman/internal/core"
-	"github.com/teleman-cli/teleman/internal/ignore"
+	"github.com/teleman-cli/teleman/internal/filter"
 	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 	"github.com/teleman-cli/teleman/internal/progress"
@@ -62,10 +62,10 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 		idx.Targets[tctx.TargetKey] = make(map[string]*models.FileEntry)
 	}
 
-	// Load .telemanignore
-	ignorer := ignore.Load(source)
-	if ignorer.Loaded {
-		logger.Info("=> Using .telemanignore rules")
+	// Build pipeline
+	pipeline, err := filter.BuildPipelineFromOptions(source, s.opts)
+	if err != nil {
+		logger.Warn("=> Failed to build filter pipeline: %v", err)
 	}
 
 	// 1. Gather files
@@ -85,12 +85,22 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 				return nil
 			}
 
-			if ignorer.IsIgnored(rel) {
-				logger.Debug("   [Skipped by ignore] %s", rel)
-				if fInfo.IsDir() {
-					return filepath.SkipDir
+			if pipeline != nil {
+				shouldProcess, pErr := pipeline.ShouldProcess(rel, fInfo)
+				if !shouldProcess {
+					if s.opts.DryRun {
+						_, reason := pipeline.EvaluateDryRun(rel, fInfo)
+						logger.Debug("   [EXCLUDED] %s (matched: %s)", rel, reason)
+					}
+					if pErr == filepath.SkipDir {
+						return filepath.SkipDir
+					}
+					return nil
 				}
-				return nil
+				if s.opts.DryRun && !fInfo.IsDir() {
+					_, reason := pipeline.EvaluateDryRun(rel, fInfo)
+					logger.Debug("   [INCLUDED] %s (matched: %s)", rel, reason)
+				}
 			}
 
 			if !fInfo.IsDir() {
@@ -105,15 +115,26 @@ func (s *SyncEngine) Run(ctx context.Context, source, targetRaw string) error {
 		})
 	} else {
 		rel := filepath.Base(source)
-		if !ignorer.IsIgnored(rel) {
+		shouldProcess := true
+		if pipeline != nil {
+			shouldProcess, _ = pipeline.ShouldProcess(rel, info)
+		}
+		if shouldProcess {
 			vPath := fmt.Sprintf("%s/%s", strings.TrimRight(tctx.VirtualRoot, "/"), filepath.Base(source))
+			if s.opts.DryRun && pipeline != nil {
+				_, reason := pipeline.EvaluateDryRun(rel, info)
+				logger.Debug("   [INCLUDED] %s (matched: %s)", rel, reason)
+			}
 			localFiles = append(localFiles, fileTask{
 				LocalPath:   source,
 				VirtualPath: strings.TrimLeft(vPath, "/"),
 				FileInfo:    info,
 			})
 		} else {
-			logger.Debug("   [Skipped by ignore] %s", rel)
+			if s.opts.DryRun && pipeline != nil {
+				_, reason := pipeline.EvaluateDryRun(rel, info)
+				logger.Debug("   [EXCLUDED] %s (matched: %s)", rel, reason)
+			}
 		}
 	}
 

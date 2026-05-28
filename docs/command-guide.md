@@ -13,6 +13,7 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
 3. [Listing Your Virtual Drive (`ls`)](#3-listing-your-virtual-drive-ls)
    - [Checking Directory Size (`size`)](#checking-directory-size-size)
    - [Viewing Directory Tree (`tree`)](#viewing-directory-tree-tree)
+   - [Interactive Remote Explorer (`browse`)](#interactive-remote-explorer-browse)
 4. [Copying Files (`copy`)](#4-copying-files-copy)
    - [Single Files](#single-files)
    - [Whole Directories](#whole-directories)
@@ -22,7 +23,7 @@ A comprehensive, scenario-driven reference for every Teleman command. Each secti
    - [Dry Run (Preview Changes)](#dry-run-preview-changes)
 5. [Syncing Files (`sync`)](#5-syncing-files-sync)
 6. [Moving Files (`move`)](#6-moving-files-move)
-7. [Ignoring Files (`.telemanignore`)](#7-ignoring-files-telemanignore)
+7. [Advanced Filtering & Ignoring (`.telemanfilter`)](#7-advanced-filtering--ignoring-telemanfilter)
 8. [Downloading Files (`download`)](#8-downloading-files-download)
    - [Single Files](#single-file-download)
    - [Whole Directories](#directory-download)
@@ -128,6 +129,21 @@ teleman tree remote:media/
 # Limit the depth of the tree to top-level folders
 teleman tree nas: --depth 1
 ```
+
+### Interactive Remote Explorer (`browse`)
+
+To launch a terminal-native, fully interactive visual file explorer to navigate your remotes, inspect directory metrics, search files, and download instantly:
+
+```bash
+# Open the interactive TUI browser
+teleman browse
+```
+
+- **Vim bindings:** Use `j/k` to navigate, `h/l` to enter/exit folders, and `Enter` to select.
+- **Real-time search:** Press `/` to search and filter files dynamically.
+- **Quick download:** Press `d` to instantly download the selected item and view real-time progress bars.
+
+> 📖 For full UI documentation, keybindings, and capabilities, see [browse.md](./browse.md).
 
 ---
 
@@ -303,42 +319,18 @@ teleman move ./Temp/ remote:archive/ --dry-run
 
 ---
 
-## 7. Ignoring Files (`.telemanignore`)
+## 7. Advanced Filtering & Ignoring (`.telemanfilter`)
 
-Teleman supports excluding files and directories during `copy`, `move`, and `sync` operations using a `.telemanignore` file located in your source directory.
+Teleman supports highly optimized file exclusions and inclusions during `copy`, `move`, and `sync` operations. Excluded folders are skipped during traversal, drastically reducing I/O operations.
 
 ### Key Features:
-- **Fast Skipping:** Folders matching an ignore rule are skipped entirely without scanning their contents.
-- **Ordered Negation:** Use `!` to override an ignore rule (last match wins).
-- **Local Only:** Rules only apply to local source scanning; they do not affect downloads or remote listings.
+- **Unified Engine:** CLI flags and `.telemanfilter` files use the exact same logic.
+- **Layered Rules:** Rules are evaluated top-to-bottom, where later rules override earlier ones (Last Match Wins).
+- **Dynamic Presets:** Standard setups (`--photos`, `--videos`, `--music`, `--documents`) are generated on-the-fly.
+- **Dry-Run Visibility:** Combined with `--dry-run -v`, Teleman logs exactly which rule matches each file.
+- **Backwards Compatibility:** Legacy `.telemanignore` files continue to work out-of-the-box.
 
-### Bootstrapping an Ignore File
-You can instantly create a default `.telemanignore` file pre-filled with common patterns (like `node_modules/`, `*.log`, etc.) by running:
-```bash
-# Initialize in current directory
-teleman ignore init
-
-# Force overwrite if one already exists
-teleman ignore init --force
-```
-
-### Example `.telemanignore`:
-```text
-# Exclude build and dependency directories
-node_modules/
-dist/
-
-# Exclude all logs
-*.log
-
-# BUT include this specific log
-!important.log
-
-# Exclude sensitive file
-secret.txt
-```
-
-> 📖 For full syntax details, see [telemanignore.md](./telemanignore.md).
+> 📖 For full syntax details, presets, and examples, see [filtering.md](./filtering.md).
 
 ---
 
@@ -675,6 +667,16 @@ teleman download backup:projects/my-app/ ./restored/
 | `--force` | `-f` | `false` | Skip index diff — re-upload everything unconditionally |
 | `--dry-run` | — | `false` | Preview what would be transferred without making changes |
 | `--password` | — | `""` | Encryption password (prefer `TELEMAN_PASSWORD` env var) |
+| `--include` | — | `[]` | Include paths matching pattern (e.g. `*.flac`) |
+| `--exclude` | — | `[]` | Exclude paths matching pattern (e.g. `node_modules/`) |
+| `--min-size` | — | `""` | Exclude files smaller than size (e.g. `50M`) |
+| `--max-size` | — | `""` | Exclude files larger than size (e.g. `2G`) |
+| `--modified-after` | — | `""` | Exclude files modified on or before date (e.g. `2026-01-01`) |
+| `--modified-before` | — | `""` | Exclude files modified on or after date (e.g. `2026-01-01`) |
+| `--photos` | — | `false` | Apply the standard photos filter preset |
+| `--videos` | — | `false` | Apply the standard videos filter preset |
+| `--music` | — | `false` | Apply the standard music filter preset |
+| `--documents` | — | `false` | Apply the standard documents filter preset |
 
 ### Download Flags (`download`)
 

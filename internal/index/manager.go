@@ -198,21 +198,24 @@ func (m *Manager) PushVersion(idx *models.Index) error {
 
 // Load fetches the index or loads from cache if sha matches.
 func (m *Manager) Load() (*models.Index, error) {
-	updates, err := m.client.GetUpdates()
 	var latestFileID string
-	if err == nil {
-		for _, update := range updates {
-			var msg map[string]interface{}
-			if post, ok := update["channel_post"].(map[string]interface{}); ok {
-				msg = post
-			} else if m, ok := update["message"].(map[string]interface{}); ok {
-				msg = m
-			}
-			if msg != nil {
-				if doc, ok := msg["document"].(map[string]interface{}); ok {
-					if fileName, ok := doc["file_name"].(string); ok && fileName == "teleman.index.json" {
-						if fileID, ok := doc["file_id"].(string); ok {
-							latestFileID = fileID
+	
+	if m.client != nil {
+		updates, err := m.client.GetUpdates()
+		if err == nil {
+			for _, update := range updates {
+				var msg map[string]interface{}
+				if post, ok := update["channel_post"].(map[string]interface{}); ok {
+					msg = post
+				} else if m, ok := update["message"].(map[string]interface{}); ok {
+					msg = m
+				}
+				if msg != nil {
+					if doc, ok := msg["document"].(map[string]interface{}); ok {
+						if fileName, ok := doc["file_name"].(string); ok && fileName == "teleman.index.json" {
+							if fileID, ok := doc["file_id"].(string); ok {
+								latestFileID = fileID
+							}
 						}
 					}
 				}
@@ -223,7 +226,7 @@ func (m *Manager) Load() (*models.Index, error) {
 	var data []byte
 	var readErr error
 
-	if latestFileID != "" {
+	if latestFileID != "" && m.client != nil {
 		filePath, fErr := m.client.GetFile(latestFileID)
 		if fErr == nil {
 			stream, sErr := m.client.DownloadFileStream(filePath)
@@ -241,7 +244,8 @@ func (m *Manager) Load() (*models.Index, error) {
 		}
 	}
 
-	if readErr != nil || latestFileID == "" {
+	if readErr != nil || latestFileID == "" || m.client == nil {
+		var err error
 		data, err = os.ReadFile(m.localCache)
 		if err != nil {
 			return &models.Index{Version: 1, Targets: make(map[string]map[string]*models.FileEntry)}, nil

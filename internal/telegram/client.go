@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/models"
 )
 
@@ -171,9 +172,9 @@ func NewSmartClient(token string, apiHosts models.HostMap, fileHosts models.Host
 	apiHost := resolveAPIHost(token, apiHosts)
 	fileHost := resolveFileHost(fileHosts)
 
-	fmt.Printf("Using API Endpoint: %s\n", apiHost)
+	logger.Step("Using API Endpoint: %s", apiHost)
 	if fileHost != "" {
-		fmt.Printf("Using File Server Endpoint: %s\n", fileHost)
+		logger.Step("Using File Server Endpoint: %s", fileHost)
 	}
 
 	// Custom transport optimized for high-throughput concurrent uploads

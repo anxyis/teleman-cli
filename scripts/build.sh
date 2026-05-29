@@ -23,12 +23,7 @@ do
     export GOOS=$GOOS
     export GOARCH=$GOARCH
     # -s -w: Omit the symbol table and debug information to reduce binary size.
-    if [ "$GOOS" = "linux" ]; then
-        # Compile Linux binaries with -buildmode=pie so they work on both standard Linux and Android/Termux
-        go build -buildmode=pie -ldflags="-s -w" -o $output_name main.go
-    else
-        go build -ldflags="-s -w" -o $output_name main.go
-    fi
+    go build -ldflags="-s -w" -o $output_name main.go
 done
 
 echo -e "\nAll builds completed successfully! Check the 'dist' folder."

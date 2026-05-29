@@ -32,7 +32,11 @@ A lightning-fast, terminal-native file browser built with the `charmbracelet/bub
 - **Virtual Tree Explorer:** Explore files and directories nested inside your remote virtual drive.
 - **Vim Power-User Keybindings:** Navigating feels natural with `j`/`k` (move selection), `h`/`l` / `Enter` (traverse directories), `/` (live search & filter explorer items in real-time), and `Esc` (go back).
 - **Accurate Directory Metrics:** Displays individual file sizes and directory total file counts + accumulated byte sizes instantly.
-- **Seamless Quick-Download (`d`):** Pressing `d` temporarily suspends the TUI browser and runs `teleman download` synchronously, leveraging rich multi-threaded progress bars and ETA screens before resuming the explorer tree exactly where the user left off.
+- **TUI Multi-Select (`Space`):** Select multiple files or directories with solid background color highlights. No brackets, and selection does not push the cursor down.
+- **Inline Background Downloads (`d`):** Pressing `d` downloads selected items asynchronously in background goroutines with real-time percentage updates (`↓ 45%`) displayed inline in the tree, without suspending the TUI or terminal flickering.
+- **Download Queue (Single Concurrency):** Queues multiple files if batch-downloaded. The footer displays progress for the active download and shows the remaining queue size (e.g., `(+3 queued)`).
+- **Centered Pop-up Deletion Confirmation:** Displays a beautiful, centered double-bordered pop-up dialog for deleting files.
+- **Efficient Batch Deletions (`delete`):** Pressing `delete` deletes all selected items (or the cursor item) in a single atomic Telegram index push transaction via refactored backend logic.
 
 ---
 
@@ -41,6 +45,9 @@ A lightning-fast, terminal-native file browser built with the `charmbracelet/bub
 - **MaxSize bug:** Fixed a critical bug in `max-size` rule evaluation where smaller files were erroneously excluded and larger files were included.
 - **Date Boundary bugs:** Corrected `modified-after` and `modified-before` to act as proper exclusions rather than matching includes that still allowed outer files to pass under default behavior.
 - **Metadata Test Build Conflict:** Resolved a `main` redeclaration conflict in `test_metadata.go` by reorganizing scripts into dedicated nested directories, allowing all package testing and building to succeed cleanly.
+- **TUI Event Handling & Page-Down Scroll:** Fixed a bug where pressing `d` natively triggered `list.Model` page-down scrolling. Event bubbling has been correctly terminated.
+- **TUI History Stack & Navigation:** Fixed navigation stack bugs where going back from a folder could sometimes trigger directory state corruption or folder back-navigation history losses.
+- **TUI & CLI Bulk Deletions:** Updated CLI commands (`delete`/`purge`) and backend engine (`core.RunDelete` in `internal/core/delete.go`) to support multiple target paths, locking and pushing the index exactly once to avoid redundant network updates.
 
 ---
 
@@ -48,6 +55,8 @@ A lightning-fast, terminal-native file browser built with the `charmbracelet/bub
 
 ### New Commands
 - `teleman browse`: Launches the interactive TUI.
+- `teleman delete <target1> <target2> ...`: Supports multiple target deletions in a single run.
+- `teleman purge <target1> <target2> ...`: Supports multiple target purges in a single run.
 
 ### New Flags (`copy`, `move`, `sync`)
 - `--include <pattern>`: Include files matching pattern (e.g. `*.flac`).

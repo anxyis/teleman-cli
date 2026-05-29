@@ -170,7 +170,7 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 					progressTracker = progress.NewBarWriter(bar)
 				}
 
-				if err := downloadFile(ctx, engine, entry, tmpPath, opts.Password, progressTracker); err != nil {
+				if err := DownloadFile(ctx, engine, entry, tmpPath, opts.Password, progressTracker); err != nil {
 					if bar != nil {
 						bar.Abort(true)
 					}
@@ -219,8 +219,8 @@ func RunDownload(ctx context.Context, targetRaw, localDest string, opts *models.
 	return nil
 }
 
-// downloadFile creates a file at the given path and streams reassembled chunks into it.
-func downloadFile(ctx context.Context, engine *chunker.Engine, entry *models.FileEntry, destPath string, password []byte, progressTracker io.Writer) error {
+// DownloadFile creates a file at the given path and streams reassembled chunks into it.
+func DownloadFile(ctx context.Context, engine *chunker.Engine, entry *models.FileEntry, destPath string, password []byte, progressTracker io.Writer) error {
 	// Open file in RDWR mode, create if it doesn't exist
 	f, err := os.OpenFile(destPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {

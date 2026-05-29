@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/teleman-cli/teleman/internal/logger"
 	"github.com/teleman-cli/teleman/internal/tui"
 )
 
@@ -19,6 +20,7 @@ Features:
 - Search within a folder (/)
 - Download a file or folder quickly (d)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		logger.Quiet = true // Force quiet mode to suppress any library output
 		p := tea.NewProgram(tui.NewMainModel(), tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("error running TUI: %v", err)

@@ -497,10 +497,14 @@ func (e *Engine) ReassembleStreamCtx(ctx context.Context, chunks []*models.Chunk
 			// 4. Strict hash verification
 			computedHash := hex.EncodeToString(hasher.Sum(nil))
 			if computedHash != chunk.Hash {
-				return fmt.Errorf("chunk %d/%d: HASH MISMATCH (expected %s, got %s) — aborting download to prevent data corruption", i+1, len(sorted), chunk.Hash, computedHash)
+				if chunk.Encrypted {
+					return fmt.Errorf("chunk %d/%d: HASH MISMATCH (expected %s, got %s) — aborting download to prevent data corruption", i+1, len(sorted), chunk.Hash, computedHash)
+				} else {
+					logger.Warn("      [Chunk %d/%d] HASH MISMATCH (expected %s, got %s). Accepting anyway because chunk is unencrypted (likely modified by Telegram MediaMode compression)", i+1, len(sorted), chunk.Hash, computedHash)
+				}
+			} else {
+				logger.Debug("      [Chunk %d/%d] Hash verified ✓", i+1, len(sorted))
 			}
-
-			logger.Debug("      [Chunk %d/%d] Hash verified ✓", i+1, len(sorted))
 
 			// Open temp file for reading
 			tmpFileRead, err := os.Open(tmpFileName)

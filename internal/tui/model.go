@@ -42,7 +42,8 @@ type MainModel struct {
 	idx         *models.Index
 	
 	remotesList list.Model
-	treeModel   *TreeModel // We will define TreeModel in tree.go
+	treeModels  map[string]*TreeModel // Cached tree models by targetKey
+	activeKey   string                // Currently active targetKey
 	
 	width  int
 	height int
@@ -71,6 +72,7 @@ func NewMainModel() *MainModel {
 		state:       stateRemotes,
 		cfg:         cfg,
 		remotesList: l,
+		treeModels:  make(map[string]*TreeModel),
 		err:         errState,
 	}
 }
@@ -97,8 +99,8 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height - v
 		
 		m.remotesList.SetSize(m.width, m.height)
-		if m.treeModel != nil {
-			m.treeModel.SetSize(m.width, m.height)
+		for _, tm := range m.treeModels {
+			tm.SetSize(m.width, m.height)
 		}
 
 	case tea.KeyMsg:
@@ -112,7 +114,7 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.state == stateTree {
 				m.state = stateRemotes
-				m.treeModel = nil // Reset tree
+				m.activeKey = "" // Clear active key, but keep cached trees
 				m.remotesList.Title = "Select Remote"
 				return m, nil
 			}
@@ -133,8 +135,10 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case stateTree:
 		var treeCmd tea.Cmd
-		if m.treeModel != nil {
-			*m.treeModel, treeCmd = m.treeModel.Update(msg)
+		if m.activeKey != "" && m.treeModels[m.activeKey] != nil {
+			var newModel TreeModel
+			newModel, treeCmd = m.treeModels[m.activeKey].Update(msg)
+			m.treeModels[m.activeKey] = &newModel
 		}
 		return m, treeCmd
 	}
@@ -142,26 +146,33 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *MainModel) loadTree(rem remoteItem) {
-	// Initialize Index Manager (offline)
-	mgr, err := index.NewManager(nil, "")
-	if err != nil {
-		m.err = err
-		return
-	}
-	idx, err := mgr.Load()
-	if err != nil {
-		m.err = err
-		return
-	}
-	m.idx = idx
-
 	targetKey := rem.target.ChatID
 	if rem.target.ThreadID != "" {
 		targetKey += ":" + rem.target.ThreadID
 	}
 
-	m.treeModel = NewTreeModel(rem.alias, targetKey, m.idx.Targets[targetKey])
-	m.treeModel.SetSize(m.width, m.height)
+	if _, exists := m.treeModels[targetKey]; !exists {
+		// Initialize Index Manager (offline) if needed
+		if m.idx == nil {
+			mgr, err := index.NewManager(nil, "")
+			if err != nil {
+				m.err = err
+				return
+			}
+			idx, err := mgr.Load()
+			if err != nil {
+				m.err = err
+				return
+			}
+			m.idx = idx
+		}
+		
+		tm := NewTreeModel(rem.alias, targetKey, m.idx.Targets[targetKey], m.cfg)
+		tm.SetSize(m.width, m.height)
+		m.treeModels[targetKey] = tm
+	}
+
+	m.activeKey = targetKey
 	m.state = stateTree
 }
 
@@ -174,8 +185,8 @@ func (m *MainModel) View() string {
 	case stateRemotes:
 		return docStyle.Render(m.remotesList.View())
 	case stateTree:
-		if m.treeModel != nil {
-			return docStyle.Render(m.treeModel.View())
+		if m.activeKey != "" && m.treeModels[m.activeKey] != nil {
+			return docStyle.Render(m.treeModels[m.activeKey].View())
 		}
 	}
 	return "Loading..."

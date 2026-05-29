@@ -485,7 +485,7 @@ Examples:
   teleman delete backup:reports/2023_tax.pdf
   teleman delete backup:reports/
   teleman delete backup:legacy/ --dry-run`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts := &core.DeleteOptions{
 			Recursive: false,
@@ -493,7 +493,7 @@ Examples:
 			Confirm:   true, // non-recursive delete doesn't strictly need a prompt
 			Transfers: transfers,
 		}
-		return core.RunDelete(globalCtx, args[0], opts)
+		return core.RunDelete(globalCtx, args, opts)
 	},
 }
 
@@ -547,7 +547,7 @@ Examples:
   teleman purge remote:old_projects/
   teleman purge remote:temp/ --confirm
   teleman purge backup:archive/ -t 16`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts := &core.DeleteOptions{
 			Recursive: true,
@@ -555,7 +555,7 @@ Examples:
 			Confirm:   confirm,
 			Transfers: transfers,
 		}
-		return core.RunDelete(globalCtx, args[0], opts)
+		return core.RunDelete(globalCtx, args, opts)
 	},
 }
 
